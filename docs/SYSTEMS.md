@@ -1,6 +1,6 @@
 # dispatcher: systems
 
-This is the architecture as intended: the components, what crosses between them, and which parts are settled. The product is in [PRODUCT.md](PRODUCT.md), the decisions and what they rejected are in [adrs/000-record-architecture-decisions.md](adrs/000-record-architecture-decisions.md) and the records beside it, and the questions still open are collected in [section 12](#12-settled-and-open).
+This is the architecture as intended: the components, what crosses between them, and which parts are settled. The product is in [PRODUCT.md](PRODUCT.md), the decisions and what they rejected are in [adrs/000-record-architecture-decisions.md](adrs/000-record-architecture-decisions.md) and the records beside it, and how each question that shaped it was settled is collected in [section 12](#12-settled).
 
 ## 1. The shape
 
@@ -51,17 +51,18 @@ An event that is valid but not ours is answered `202`, never `4xx`: a 4xx makes 
 
 ## 4. Routing — which event belongs to which bot
 
-One place, one rule, and the same two facts the poll uses today: the card's assignee, and its board `Status`. The fleet it routes over is the four bots the queue config already names — `mama`, `meme`, `mimi`, `momo` — each with its profile and its GitHub login.
+One place, one rule. The fact that decides is the card's **assignee** — the payload carries it for most events, and where it does not the router reads the card's board item for it. The card's board **stage** comes from that same read and only the claim wake below uses it: a routing decision the payload can answer never spends a board call. The fleet it routes over is the four bots the queue config already names — `mama`, `meme`, `mimi`, `momo` — each with its profile and its GitHub login.
 
 - The repository an event names must be on the allowlist; if it is not, the event concerns nobody here.
 - An actor or assignee whose login is `thani-sh-<bot>` maps to profile `<bot>`. Nothing else maps to a bot, and the operator's own login maps to nobody.
 - The event's action decides whether the fact is a wake at all. An assignment, a comment, a review, a review request and a finished check run are; a label edit nobody acts on is not.
 - When the payload does not carry the owning bot — a comment on an unassigned card, a review request, a check run — the router reads the card's board item and uses its assignee. When that read is inconclusive, the event is not a wake for anyone: it is logged and dropped. The service never wakes more than one bot for one event, and never all four.
+- **A card with nobody on it is the claim case.** An accepted `issues` action on a card nobody holds — an `unassigned`, or a card that has just arrived (`opened`) — resolves to the *claim* wake: the router computes the claimable card from the board (the lowest-numbered card on the board, in `Todo`, unassigned, and not labelled `blocked`) and wakes the one bot whose turn it is. The claimant order is the order of the routes file's own entries (section 8) — `mama`, `meme`, `mimi`, `momo` today, which is also the fleet's login order — so the rule is configuration and not code. Once the poll is gone this is the only claim path there will be (section 11), which is why the rule is carried here deliberately instead of inherited by accident. A card that is not on the board is not the claim case, and an inconclusive read is dropped as above.
 - The bots' profiles and logins are read from the same config the monitors read, so a new bot is a config entry and not a code change.
 
 Events this service should accept, and why each is worth a wake:
 
-- `issues`: assigned, unassigned, closed, reopened — the card's stage moved.
+- `issues`: assigned, unassigned, opened, closed, reopened — a card's holder or stage moved, or a card arrived with nobody on it (the claim case above).
 - `issue_comment` and `pull_request_review_comment`: a reply landed on a card or a review.
 - `pull_request_review`: a review was submitted, including one that requests changes.
 - `pull_request`: review requested, ready for review, merged.
@@ -87,7 +88,7 @@ The dispatcher composes the wake text and posts a single JSON envelope to the ta
 
 - **Outbound URL**: the bot's own route on the gateway, whose address is the routes file's `gateway.base_url` — `/webhooks/<route>` on a single-profile gateway, `/p/<profile>/webhooks/<route>` where `gateway.multiplex_profiles` is enabled. One route per bot, its own secret, which is what makes "wake exactly this profile" a property of the URL and the signature rather than of the code.
 - **Signature**: the dispatcher signs the request the way GitHub signs, `X-Hub-Signature-256: sha256=<hex HMAC-SHA256 over the raw body>`, so the gateway has one signature story for both hops. The adapter also documents a timestamped generic V2 signature (`X-Webhook-Signature-V2` with `X-Webhook-Timestamp`, HMAC over `<timestamp>.<body>`), which carries replay protection the plain form does not; if the route accepts it, prefer it. Which form a route accepts is settled when the route is created, so it is that route's `signature_v2` switch in the routes file (section 8), and the plain form is the default.
-- **The route's own shape**: fired by `cron_job`, pointing at the bot's existing queue job, so the wake lands in the job the bot already documents rather than in a second, webhook-only instruction set. The rendered `reason` arrives as transient context for that run; the job's own prompt, skills and delivery are unchanged. Where that reference is not available, the route is an ordinary agent-mode route whose prompt is the envelope's `reason`.
+- **The route's own shape**: fired by `cron_job`, pointing at a job the bot's wake already runs, so the wake lands in a run whose prompt, skills and delivery are the bot's own rather than in a second, webhook-only instruction set. The rendered `reason` arrives as transient per-run context; the job's own prompt, skills and delivery are unchanged. **The cutover removes the job the poll pointed at** — its programs go with their cron entries (section 11) — so a route created afterwards either fires a job kept deliberately as the wake's landing place, or is an ordinary agent-mode route whose prompt is the envelope's `reason`. Which one each bot has is decided when the routes are created and recorded in section 10, not assumed here.
 - **Coalescing**: the route groups bursts by `{repository.full_name}#{card.number}`, so five rapid comments on one card are one wake with the latest event. A genuine second fact after the quiet window is a second wake.
 - **Timeouts and retries**: a short request timeout, and a bounded retry with backoff for a connection error or a 5xx. A 4xx is never retried — it means the route, the secret or the envelope is wrong, and repeating it repeats the failure.
 - **What the far end guarantees**: the gateway runs the agent run, or fires the job's turn, at most once per accepted delivery, and its own dedup cache drops a repeated delivery id. The dispatcher therefore does not need to know whether the agent finished, only whether the wake was accepted.
@@ -115,7 +116,7 @@ GitHub delivers at least once, and redelivers on any non-2xx. The dispatcher is 
 
 ## 8. Configuration and secrets
 
-- The **routes file** is YAML and lives in this repository: the listen address, the allowlist of repositories and events, the gateway's address and whether it multiplexes profiles, and one entry per route — its name, the bot it wakes, the gateway route and profile it posts to, the signature form that route accepts, and the *name* of the secret it verifies with. It is committed because it holds no secret.
+- The **routes file** is YAML and lives in this repository: the listen address, the allowlist of repositories and events, the gateway's address and whether it multiplexes profiles, and one entry per route — its name, the bot it wakes, the gateway route and profile it posts to, the signature form that route accepts, and the *name* of the secret it verifies with. It is committed because it holds no secret. **The order of the `routes` entries is the claimant order** (section 4): the first route whose bot holds nothing takes a claimable card, so moving an entry is a routing change like any other and lands in the same reviewed diff.
 - **Secret values are outside it**: an environment file the service's unit loads, or paths to files with mode `600`, owned by the service user. The routes file may name the environment variable or the path; it never holds the value.
 - **Nothing secret is logged, ever** — not the value, not a prefix, not a hash of it. Payload bodies are not logged either: an audit line carries identifiers, not content, because a payload can carry anything a third party wrote.
 - The one secret per route rule applies on both hops: GitHub signs the inbound POST with the route's secret, and the dispatcher signs the outbound POST with the bot's route secret on the gateway. They are different secrets for different hops.
@@ -128,26 +129,29 @@ The trail answers the two questions an operator actually asks: *was this event w
 
 ## 10. Deployment
 
-- One long-running process on the shared VPS, beside the Hermes gateway, as a systemd user unit. Restart behaviour is `on-failure`, and the unit's environment file is where the secrets are (section 8).
-- The service binds loopback only. TLS terminates at the reverse proxy in front of it, which is what exposes the endpoint to GitHub; the proxy is where the public path and the certificate live.
-- The gateway's webhook adapter listens on its own port (`8644` by default) and each bot's route is created on it, bound to that bot's profile. The routes live in `~/.hermes/webhook_subscriptions.json` and are hot-reloaded, so a route change is live on the next event with no gateway restart.
-- The board and issue reads go through the GitHub API with a token of its own, read-only for the board, kept outside the routes file like every other secret.
-- Which port, which public path, where TLS terminates, and how the route is created are host facts of the operator's; they are recorded here once confirmed rather than assumed.
+Host facts, recorded here as they were confirmed; one that is not yet built says so rather than being assumed.
 
-## 11. Coexistence with the poll, during migration
+- **The process.** One long-running process on the shared VPS, beside the Hermes gateway, as a systemd user unit. Restart behaviour is `on-failure`, and the unit's environment file — mode `600`, owned by the service user — is where the secrets are (section 8).
+- **The listen side.** The service binds loopback only: `127.0.0.1:8645`, serving `POST /github`. Both are the routes file's `listen` and `endpoint_path`, and these are the values the tree carries.
+- **The public side.** TLS terminates at the reverse proxy in front of the service, which is what gives GitHub a path to post to. **That is the decision: a proxy with a certificate, not a tunnel out to a fronting service.** The host's own name, the public URL and the certificate are recorded here when the deployment card builds the proxy; as of 2026-09-30 nothing on the host terminated TLS, `sshd` was the only listener, and there was no certificate and no public path.
+- **The gateway.** Its webhook adapter listens on `8644` and each bot's route is created on it, bound to that bot's profile with its own secret. Profile multiplexing is on (`gateway.multiplex_profiles: true`), so the outbound form is `/p/<bot>/webhooks/<route>` (section 5). The routes live in `~/.hermes/webhook_subscriptions.json` and are hot-reloaded, so a route change is live on the next event with no gateway restart. **The webhook platform is off today** — no subscriptions file, nothing listening on `8644` — so enabling it and creating the four routes is the deployment card's step.
+- **The inbound webhook.** One organisation webhook, not one per repository (section 12): new repositories are covered with no second setup step, and the allowlist makes it safe. Creating it needs an organisation owner.
+- **The board token.** The board and issue reads go through the GitHub API with a token of its own, read-only for the board, kept outside the routes file like every other secret. It does not exist yet; the deployment card creates it.
+- **Each route's shape** — the job it fires, or an ordinary agent-mode route (section 5) — is recorded here with the routes, because it is a property of how the host's gateway is configured rather than of this service.
 
-A bot is on one wake source at a time. Migration is per bot and is one step in each direction:
+## 11. The cutover
 
-1. Create the bot's gateway route, bound to its profile with its own secret.
-2. Point the repository's webhook at the dispatcher, once.
-3. Move the bot: the dispatcher's route for that bot goes live, and its `queue_poll` cron entry stops being scheduled — the same commit, so no window exists in which both wake that bot.
-4. Check the audit log for the bot's first real event before moving the next bot.
+There is no coexistence to manage and no migration to run: **the poll-backed process is removed entirely before the dispatcher runs.** The two wake sources are never alive at the same time — not because one step makes the switch atomic, but because there is no longer a second one.
 
-Rollback is the same steps in reverse, and it is the reason step 3 is one step: the poll program is not deleted, only unscheduled, so a bot can go back to a timer without a code change.
+1. The service is finished, reviewed and green on `main`.
+2. Every bot's `queue_poll` cron entry is removed, and the poll's programs are deleted with them. The hourly stalled-work probe is not the poll and stays: it is the fleet's clock, it covers the one thing an event-driven service cannot see — nothing happening — and with the poll gone it is also the only scheduled thing left that can notice a bot has gone quiet.
+3. Only then is the dispatcher's unit started.
 
-What the hourly stalled-work probe keeps doing after every bot has moved: it is the fleet's clock, it covers the one thing an event-driven service cannot see — nothing happening — and it stays.
+Between step 2 and the service being stable, the fleet is reached by the operator dispatching tasks by hand. That is accepted, and it is what the clean slate costs.
 
-## 12. Settled and open
+Nothing keeps the poll alive for the transition and nothing rolls back to it: the programs go with their cron entries, so an outage is recovered by fixing the dispatcher rather than by returning to a timer. No bot migrates one at a time, and no bot is left holding a slow schedule — there is nothing left to hold one.
+
+## 12. Settled
 
 Settled, and argued in the ADRs:
 
@@ -155,17 +159,20 @@ Settled, and argued in the ADRs:
 - HMAC-SHA256 over the raw body, one secret per route, rejection before parsing ([002](adrs/002-github-webhook-ingestion.md)).
 - The wake is a signed POST to the bot's own gateway route, carrying a reason this service composed ([003](adrs/003-waking-an-agent-through-the-gateway.md)).
 - Idempotent at the delivery id, in a one-hour in-memory cache, and a failed wake is dead-lettered rather than dropped ([004](adrs/004-idempotency-and-replay.md)).
-- One router, in one place, using the card's assignee and stage ([005](adrs/005-routing-an-event-to-one-bot.md)).
+- One router, in one place, on the card's assignee — and the claim rule when a card has nobody on it ([005](adrs/005-routing-an-event-to-one-bot.md)).
 - A committed routes file, secrets outside it ([006](adrs/006-configuration-and-secrets.md)).
 - No storage in v1 ([007](adrs/007-persistence.md)).
-- A systemd user unit beside the gateway, one wake source per bot, the probe stays ([008](adrs/008-deployment-and-coexistence-with-the-poll.md)).
+- A systemd user unit beside the gateway, the clean-slate cutover, the probe stays ([008](adrs/008-deployment-and-the-cutover.md)).
 - The wake text is composed by the dispatcher, not by a gateway template.
 - The service never writes to the board.
 
-Open, and to be settled with the operator before the first bot moves:
+Settled with the operator on 2026-09-30, each answered rather than assumed, each landing in the section it shapes:
 
-- **An event on an unassigned card.** A new card in Todo is claimable by whichever bot holds nothing, which is a real reason to wake somebody and no obvious reason to wake anybody in particular. Either the router computes the claimable card and wakes that one bot by the poll's own rule, or an unassigned card waits for a sweep. Settling it decides how much of the claim rule moves into the router.
-- **Whether a migrated bot's queue job keeps a slow schedule.** Removing it follows the never-both rule strictly and makes a dispatcher outage silent for that bot; keeping a monitor-mode sweep means a bot still wakes within the sweep interval when the dispatcher is down, at the cost of the timer the fleet is trying to shed. The rule as it stands is: remove it, and roll back one bot at a time.
-- **Whether a card's board `Status` is needed for the events that are accepted**, or whether the assignee alone resolves them. The read exists for the events where it is not; each use of it should earn its API call.
-- **One webhook per repository, or one organisation webhook.** The organisation webhook covers new repositories without a second setup step and sends events for everything; per-repository webhooks send less and must be added one by one. The allowlist makes either safe; this is the operator's call.
-- **The host facts in section 10**: the public path, the TLS terminator, the ports, whether the gateway's webhook platform is enabled today, and whether profile multiplexing is on. None of these can be settled from the repository.
+- **The cutover is a clean slate.** The poll is removed entirely before the dispatcher runs — no per-bot migration, no coexistence, no rollback to the poll — which voids the premise section 11 and [ADR 008](adrs/008-deployment-and-the-cutover.md) were built on. Restated in section 11 and in that record.
+- **An event on a card with nobody on it wakes the claim.** The router computes the claimable card and wakes the one bot whose turn it is, by the claimant order the routes file names — the rule the poll implements today, carried over deliberately, because with the poll retired nothing else implements a claim. In section 4, and argued in [ADR 005](adrs/005-routing-an-event-to-one-bot.md).
+- **Whose card it is comes from the assignee alone** wherever the payload carries it; the board is read only where the payload is silent — a comment on an unassigned card, a review request, a check run — so each board call still has to earn itself. In section 4.
+- **One organisation webhook**, not one per repository: new repositories are covered with no second setup step, and the allowlist makes it safe. It needs an organisation owner to create it. In section 10.
+- **The routes file stays YAML, with one dependency**: `gopkg.in/yaml.v3`, added by the skeleton and justified in its pull request, which is the bar [ADR 001](adrs/001-go-and-the-standard-library.md) sets. The alternative — standard library only, a JSON routes file, [ADR 006](adrs/006-configuration-and-secrets.md) amended — is the one not taken. In section 8 and the README.
+- **The host facts are in section 10**: the loopback port and the endpoint path, profile multiplexing on, the gateway's webhook platform still off, the reverse proxy that terminates TLS, the organisation webhook, and the board token that does not exist yet.
+
+Nothing here is open. A question about the architecture is settled in this section and argued in an ADR; a fact about the host is recorded in section 10.

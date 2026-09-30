@@ -28,7 +28,7 @@ POST to the bot's own webhook route — candidate 1 — with the route firing th
 - Waking an agent is at-most-once per accepted delivery: the gateway's own dedup and the job's own claim are what protect the far end, so the dispatcher needs to know only that the wake was accepted, not that the agent finished.
 - A gateway outage is a dispatcher outage. Nothing wakes while the gateway is down; the dead-letter file is the record and GitHub's redelivery is the recovery.
 - The route's template and the dispatcher's reason text are two places that can describe the same wake. The rule that keeps them from drifting: the reason is the dispatcher's, the route holds no prose of its own beyond the envelope field.
-- Tying the wake to a `cron_job` route means the route and the job's schedule must be understood together, and whether a job can exist with no schedule of its own is a host detail still open (systems document, section 12).
+- Tying the wake to a `cron_job` route means the route and the job it fires must be understood together. Whether there is a job to fire is settled by the cutover (systems document, section 11): the poll's jobs go with its programs, so each route is either an ordinary agent-mode route or a job kept deliberately as the wake's landing place, and which one is recorded with the routes in section 10.
 
 ## Rejected
 
