@@ -1,9 +1,9 @@
 // These are the receiver's own tests, and they live in the package rather than
 // beside it because the three things they drive are unexported on purpose: the
-// bounds behind the 429 and the 503, and the router and poster seams. Card #7's
-// Post and card #8's Resolve are named ErrNotImplemented on main, so a test
-// outside the package could reach neither the dispatch path nor the capacity
-// answer before those cards land.
+// bounds behind the 429 and the 503, and the router and poster seams. `Post` is
+// real now, but card #8's `Resolve` is still named ErrNotImplemented on main, so
+// a test outside the package could not reach the dispatch path before that card
+// lands.
 //
 // Every fixture is a signed delivery and a real audit trail in a temporary
 // directory. Nothing here touches the network, and nothing depends on the wall
