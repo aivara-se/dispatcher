@@ -8,7 +8,7 @@ This file is the `aivara-se` agent convention, version `2`, adopted from `0bbd7e
 
 ## Current Project Focus
 
-Settle the open questions in `docs/SYSTEMS.md` section 12 with the operator — above all which bot an event on an unassigned card should wake — and then write the receiver and the router. Do not start the Go code while a routing question that changes its shape is open.
+Settle the open questions in `docs/SYSTEMS.md` section 12 with the operator — above all which bot an event on an unassigned card should wake — and then finish the service: the router is the last stub. Do not guess the routing table while the question that decides its shape is open.
 
 This section is steering, not policy. It is the one place where what matters right now outranks the standing rules below, it changes often, and it is replaced rather than appended to. Keep it short enough to read in full, and current enough to be worth reading.
 
@@ -37,7 +37,7 @@ go test ./...
 
 Run the whole sequence, not just its fast part, and read every result — the exit code of the last command says nothing about the first.
 
-CI runs those three commands on every pull request and on `main` (`.github/workflows/checks.yml`). The gate covers the packages, the loader's refusals, and the shape of the audit and dead-letter lines; it does not cover a delivery, because the receiver, the wake and the router are stubs. Then the four things no script sees: every relative link in a document resolves to a file in the tree, no convention slot is left unfilled, `docs/SYSTEMS.md` section 12 still names the questions the cards are blocked on, and each ADR's Consequences says what its choice costs, not only what it buys.
+CI runs those three commands on every pull request and on `main` (`.github/workflows/checks.yml`). The gate covers the packages, the loader's refusals, the shape of the audit and dead-letter lines, the wake's outbound half against a stub gateway, and signed POSTs driven through the receiver with the router and the poster stubbed; it does not cover a delivery through the real router, which is the last stub the check arrives with. Then the four things no script sees: every relative link in a document resolves to a file in the tree, no convention slot is left unfilled, `docs/SYSTEMS.md` section 12 still names the questions the cards are blocked on, and each ADR's Consequences says what its choice costs, not only what it buys.
 
 ## Version Control
 
@@ -50,7 +50,7 @@ CI runs those three commands on every pull request and on `main` (`.github/workf
 
 ## Repository Structure
 
-- `cmd/` and `internal/`: the service — `config` and `audit` whole, `receiver`, `router` and `wake` stubs
+- `cmd/` and `internal/`: the service — `config`, `audit`, `receiver` and `wake` whole, `router` the last stub
 - `config/routes.example.yaml`: the routes file template; no secret value lives in it
 - `.github/workflows/checks.yml`: the gate
 - `README.md`: what the service is, how it builds and runs, and where the documents are
