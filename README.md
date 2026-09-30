@@ -2,7 +2,7 @@
 
 A Go HTTP service that GitHub calls: it verifies the payload, decides which single agent in the `aivara-se` fleet the event belongs to, and wakes that agent with the reason attached. It exists so an agent is woken by a fact — a card assigned, a comment, a review, a check run — instead of by a ten-minute timer.
 
-Status: the skeleton is in. The module, the configuration it loads, the audit and dead-letter writers, and the package boundaries are on `main`; `internal/wake` posts the signed envelope — the gateway's route, the retry bound, and the two signature forms a route may take — and `internal/receiver` and `internal/router` are the stubs the two code cards replace. Nothing dispatches a wake from a delivery yet: nothing outside the wake's own tests calls `Post`.
+Status: the skeleton is in. The module, the configuration it loads, the audit and dead-letter writers, and the package boundaries are on `main`; `internal/receiver` verifies a signed delivery and `internal/wake` posts the signed envelope — the gateway's route, the retry bound, and the two signature forms a route may take — and `internal/router` is the one stub the last code card replaces. Nothing dispatches a wake from a delivery yet: a delivery is verified, deduplicated and audited, then refused where the router's stub answers, before `Post` is reached.
 
 ## Requirements
 
@@ -29,7 +29,7 @@ go vet ./...
 go test ./...
 ```
 
-That is the whole gate, and CI runs it on every pull request and on `main` (`.github/workflows/checks.yml`). It covers the packages, the loader's refusals, the shape of the audit and dead-letter lines, and the wake's outbound half against a stub gateway: the envelope's bytes, its signature in both forms, the gateway URL it is posted to, and the retry bound. It does not cover a delivery: the receiver and the router are stubs, so nothing drives a signed POST through the service yet, and that check arrives with the receiver.
+That is the whole gate, and CI runs it on every pull request and on `main` (`.github/workflows/checks.yml`). It covers the packages, the loader's refusals, the shape of the audit and dead-letter lines, the wake's outbound half against a stub gateway — the envelope's bytes, its signature in both forms, the gateway URL it is posted to, and the retry bound — and signed POSTs driven through the receiver with the router and the poster stubbed. It does not cover a delivery through the real router: a delivery is verified, deduplicated and audited, then refused where that stub answers, and the check that closes the gap arrives with `internal/router`.
 
 ## Documentation
 
