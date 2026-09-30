@@ -130,9 +130,13 @@ func TestLoadReadsTheSignatureForm(t *testing.T) {
 
 // The committed example is the file an operator copies, so it has to be a file
 // this service loads: every field named, both references resolvable, one route
-// per bot and nothing invented.
+// per bot and nothing invented. The four bots are written out here rather than
+// read from the code because the example is what defines the fleet: the routes
+// file is the fleet, and its order is the claim order (docs/SYSTEMS.md
+// section 8).
 func TestExampleRoutesFileLoads(t *testing.T) {
-	for _, bot := range config.Bots {
+	fleet := []string{"mama", "meme", "mimi", "momo"}
+	for _, bot := range fleet {
 		upper := strings.ToUpper(bot)
 		t.Setenv("DISPATCHER_GITHUB_SECRET_"+upper, "example-value")
 		t.Setenv("DISPATCHER_GATEWAY_SECRET_"+upper, "example-value")
@@ -141,10 +145,10 @@ func TestExampleRoutesFileLoads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config/routes.example.yaml must load: %v", err)
 	}
-	if len(cfg.Routes) != len(config.Bots) {
-		t.Fatalf("the example has %d route(s); one per bot is %d", len(cfg.Routes), len(config.Bots))
+	if len(cfg.Routes) != len(fleet) {
+		t.Fatalf("the example has %d route(s); one per bot is %d", len(cfg.Routes), len(fleet))
 	}
-	for i, bot := range config.Bots {
+	for i, bot := range fleet {
 		if cfg.Routes[i].Bot != bot {
 			t.Errorf("route %d wakes %q, want %q", i, cfg.Routes[i].Bot, bot)
 		}
@@ -191,9 +195,17 @@ func TestLoadRefuses(t *testing.T) {
 		says string
 	}{
 		{
-			name: "a bot outside the fleet",
-			body: func(t *testing.T) string { return strings.Replace(valid(t), "bot: mimi", "bot: miriam", 1) },
-			says: "not one of",
+			name: "a route that names no bot",
+			body: func(t *testing.T) string { return strings.Replace(valid(t), "bot: mimi", `bot: ""`, 1) },
+			says: "names no bot",
+		},
+		{
+			name: "two routes for one bot",
+			body: func(t *testing.T) string {
+				second := "  - name: mama\n    bot: mimi\n    profile: mimi\n    gateway_route: mama-queue\n    secret: TEST_GITHUB_SECRET\n    gateway_secret: TEST_GATEWAY_SECRET\n"
+				return valid(t) + second
+			},
+			says: "already has a route",
 		},
 		{
 			name: "a duplicate route name",

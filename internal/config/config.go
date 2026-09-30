@@ -19,17 +19,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Bots is the fleet the service routes over — the four profiles and logins the
-// queue configuration already names (docs/SYSTEMS.md section 4). A route naming
-// anything else is a configuration fault rather than a fifth bot: a bot the
-// router cannot place is a wake that would go nowhere.
-//
-// Card #8 moves this list to the fleet's own configuration, where a new bot is
-// an entry and not a change here. Until then it is the list this file validates
-// against.
-var Bots = []string{"mama", "meme", "mimi", "momo"}
-
 // Config is the routes file.
+//
+// The file is also the fleet: one route per bot, its profile beside it, and
+// `thani-sh-<bot>` the login the convention gives that bot (docs/SYSTEMS.md
+// section 4). The order of the routes is the claim order, so a new bot or a
+// different claim order is an entry here and not a change to the code
+// (section 8).
 type Config struct {
 	Listen         Listen        `yaml:"listen"`
 	EndpointPath   string        `yaml:"endpoint_path"`
@@ -222,6 +218,7 @@ func (c *Config) validate() error {
 		return fmt.Errorf("routes is empty: no webhook would be answered")
 	}
 	seen := map[string]bool{}
+	seenBot := map[string]bool{}
 	for i, route := range c.Routes {
 		where := fmt.Sprintf("routes[%d] (%s)", i, route.Name)
 		if route.Name == "" {
@@ -231,9 +228,13 @@ func (c *Config) validate() error {
 			return fmt.Errorf("%s: a route name is unique", where)
 		}
 		seen[route.Name] = true
-		if !known(route.Bot) {
-			return fmt.Errorf("%s names bot %q, which is not one of %s", where, route.Bot, strings.Join(Bots, ", "))
+		if route.Bot == "" {
+			return fmt.Errorf("%s names no bot: the routes file is the fleet, and a wake goes to the bot it names", where)
 		}
+		if seenBot[route.Bot] {
+			return fmt.Errorf("%s: bot %q already has a route, and one route per bot is what makes the claim order in this file's own order", where, route.Bot)
+		}
+		seenBot[route.Bot] = true
 		if route.Profile == "" {
 			return fmt.Errorf("%s has no profile: the wake goes to a profile, not to a bot in the abstract", where)
 		}
@@ -254,13 +255,4 @@ func (c *Config) validate() error {
 		}
 	}
 	return nil
-}
-
-func known(bot string) bool {
-	for _, b := range Bots {
-		if b == bot {
-			return true
-		}
-	}
-	return false
 }

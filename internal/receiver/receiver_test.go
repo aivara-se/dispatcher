@@ -1,9 +1,10 @@
 // These are the receiver's own tests, and they live in the package rather than
-// beside it because the three things they drive are unexported on purpose: the
-// bounds behind the 429 and the 503, and the router and poster seams. `Post` is
-// real now, but card #8's `Resolve` is still named ErrNotImplemented on main, so
-// a test outside the package could not reach the dispatch path before that card
-// lands.
+// beside it because three of the things they drive are unexported on purpose:
+// the bounds behind the 429 and the 503, and the router seam — which is how a
+// routing error and a filtered event are driven without a board. Everything
+// else is the real thing: a signed delivery through the handler, the router's
+// own decision over a stubbed board, the poster over a stubbed gateway, and a
+// real audit trail.
 //
 // Every fixture is a signed delivery and a real audit trail in a temporary
 // directory. Nothing here touches the network, and nothing depends on the wall
@@ -41,12 +42,14 @@ const (
 	githubSecret  = "the-inbound-webhook-secret"
 	gatewaySecret = "the-outbound-gateway-secret"
 
-	// reason is what the stubbed router answers with. The real one is card #8's.
+	// reason is what the stubbed router answers with. The real router composes
+	// its own, and TestADeliveryThroughTheRealRouterWakesTheCardHolder asserts
+	// that one.
 	reason = `aivara-se/dispatcher#6 was assigned to you: "The receiver and the verifier: the only thing that faces the network". It is in Todo on the board. Read the card and start it.`
 )
 
-// fixture is a receiver over real files in a temporary directory, with a
-// stubbed router and a stubbed poster where cards #8 and #7 will be.
+// fixture is a receiver over real files in a temporary directory, with the
+// router and the poster stubbed so that one answer can be driven at a time.
 type fixture struct {
 	rec    *Receiver
 	cfg    *config.Config
@@ -95,8 +98,9 @@ func newFixture(t *testing.T) *fixture {
 	}
 
 	// The concrete router and poster are what main builds, and building them is
-	// what keeps New's signature honest; the two stubs take over immediately
-	// because the cards that fill those bodies are not in the tree yet.
+	// what keeps New's signature honest; the two stubs take over for the
+	// branches that need a fixed answer, and the test below drives the real
+	// router's own decision with a board of its own.
 	routerStub := &fakeRouter{decision: router.Decision{Wake: true, Bot: "mimi", Reason: reason}}
 	posterStub := &fakePoster{outcome: wake.Outcome{Status: http.StatusAccepted, Attempts: 1}}
 	rec := New(cfg, router.New(cfg, nil), wake.New(cfg, &http.Client{Timeout: cfg.RequestTimeout}), trail, dead)
@@ -599,6 +603,101 @@ func TestAValidDeliveryIsWokenWithTheEnvelope(t *testing.T) {
 	}
 }
 
+// The gap card #6's own comment named, closed: a verified delivery through the
+// real router, over a board of this test's own. The comment's payload is silent
+// about the holder, so the delivery exercises the read the router makes and the
+// decision it reaches — and the wake carries the reason the router composed
+// rather than one a stub returned.
+func TestADeliveryThroughTheRealRouterWakesTheCardHolder(t *testing.T) {
+	f := newFixture(t)
+	holder := &stubBoard{assignee: "thani-sh-mimi"}
+	f.rec.router = router.New(f.cfg, holder)
+
+	body := issueComment(6)
+	h := headers(body, "d-6")
+	h["X-GitHub-Event"] = "issue_comment"
+	rec := f.post(body, h)
+	if rec.Code != http.StatusAccepted || replyOf(t, rec).Status != "accepted" {
+		t.Fatalf("a delivery through the real router = %d %s, want 202 accepted", rec.Code, rec.Body.String())
+	}
+
+	if holder.calls != 1 {
+		t.Errorf("the board was read %d time(s), want 1", holder.calls)
+	}
+	route, envelope, calls := f.poster.posted()
+	if calls != 1 {
+		t.Fatalf("the wake was posted %d time(s), want 1", calls)
+	}
+	if route.Bot != "mimi" || route.GatewayRoute != "mimi-queue" {
+		t.Errorf("the wake went to %+v, want mimi's own gateway route", route)
+	}
+	const want = `aivara-se/dispatcher#6 has a new comment, and it is yours. Read the card and answer it.`
+	if envelope.Reason != want {
+		t.Errorf("the reason was\n  %q\nwant\n  %q", envelope.Reason, want)
+	}
+	if envelope.Bot != "mimi" {
+		t.Errorf("the envelope names %q, want mimi", envelope.Bot)
+	}
+	if envelope.Card == nil || envelope.Card.Number != 6 {
+		t.Errorf("the envelope's card was %+v, want #6", envelope.Card)
+	}
+	got := f.audited(t)
+	if len(got) != 1 || got[0]["decision"] != "wake" || got[0]["bot"] != "mimi" {
+		t.Errorf("the audit trail = %v", got)
+	}
+}
+
+// A board read that failed, driven the same way: the router's error is the
+// request path's routing error, nothing is dispatched, and the delivery is not
+// recorded as dealt with, so GitHub's retry arrives as a new delivery rather
+// than as a duplicate (sections 3 and 7).
+func TestADeliveryWhoseBoardReadFailsAsksForTheDeliveryAgain(t *testing.T) {
+	f := newFixture(t)
+	f.rec.router = router.New(f.cfg, &stubBoard{err: errors.New("the board answered 502")})
+
+	body := issueComment(6)
+	h := headers(body, "d-6")
+	h["X-GitHub-Event"] = "issue_comment"
+
+	rec := f.post(body, h)
+	if rec.Code != http.StatusServiceUnavailable || replyOf(t, rec).Status != "routing-error" {
+		t.Fatalf("a delivery whose board read failed = %d %s, want 503 routing-error", rec.Code, rec.Body.String())
+	}
+	if _, _, calls := f.poster.posted(); calls != 0 {
+		t.Errorf("an unrouted delivery was dispatched %d time(s)", calls)
+	}
+	got := f.audited(t)
+	if len(got) != 1 || got[0]["decision"] != "routing-error" {
+		t.Errorf("the audit trail = %v", got)
+	}
+}
+
+// issueComment is a delivery of the shape GitHub sends for a new comment: no
+// assignee anywhere in it, which is why the router reads the board.
+func issueComment(number int) []byte {
+	return []byte(fmt.Sprintf(
+		`{"action":"created","repository":{"full_name":"aivara-se/dispatcher"},"issue":{"number":%d},"comment":{"id":1},"sender":{"login":"thani-sh-root"}}`,
+		number))
+}
+
+// stubBoard is the board the real router is handed here: one holder, no items,
+// and a count of how often it was asked.
+type stubBoard struct {
+	assignee string
+	err      error
+	calls    int
+}
+
+func (b *stubBoard) Assignee(context.Context, string, int) (string, error) {
+	b.calls++
+	return b.assignee, b.err
+}
+
+func (b *stubBoard) Items(context.Context) ([]router.Item, error) {
+	b.calls++
+	return nil, b.err
+}
+
 // An event the router answers "not a wake" for is 202, and nothing is posted.
 func TestAnEventThatIsNotAWakeIsFiltered(t *testing.T) {
 	f := newFixture(t)
@@ -621,7 +720,7 @@ func TestAnEventThatIsNotAWakeIsFiltered(t *testing.T) {
 // GitHub's retry arrives as a new delivery and is woken.
 func TestARoutingErrorAsksForTheDeliveryAgain(t *testing.T) {
 	f := newFixture(t)
-	f.router.set(router.Decision{}, errors.New("router: not implemented — card #8 owns this"))
+	f.router.set(router.Decision{}, errors.New("the board could not be read"))
 	body := issueAssigned(6)
 	h := headers(body, "d-6")
 

@@ -61,9 +61,13 @@ func run(configPath string, logger *log.Logger) error {
 	}
 	defer dead.Close()
 
-	// The board read arrives with card #8; the receiver and the wake are card #6
-	// and card #7. What is fixed here is that main builds them once, in this
-	// order, and never changes again as those cards land.
+	// The board read is the one component this tree does not build: it is the
+	// router's own reader, handed in rather than built there, and what fills it
+	// — a read-only board token, and the card a pull request's number belongs
+	// to — is the deployment card's (#9). Until it is built, `router.New` is
+	// handed nil here, and the events whose delivery is silent resolve to no
+	// wake rather than to a guess. What is fixed here is that main builds the
+	// components once, in this order, and never changes again as they land.
 	client := &http.Client{Timeout: cfg.RequestTimeout}
 	rt := router.New(cfg, nil)
 	poster := wake.New(cfg, client)
