@@ -18,6 +18,20 @@ listen:
 # The path GitHub posts to.
 endpoint_path: /github
 
+# The host's Hermes gateway: the far end of every wake. Its webhook adapter
+# listens on 8644 by default, and `multiplex_profiles` mirrors the gateway's own
+# `gateway.multiplex_profiles` setting — on, each bot's route is
+# `/p/<profile>/webhooks/<route>`; off, it is `/webhooks/<route>`
+# (docs/SYSTEMS.md sections 5 and 10).
+#
+# Per route, `signature_v2: true` declares that the route verifies the wake with
+# the gateway's timestamped form — `X-Webhook-Signature-V2` with
+# `X-Webhook-Timestamp` — instead of the `X-Hub-Signature-256` form GitHub uses,
+# which is the default and the one every route has (section 5).
+gateway:
+  base_url: http://127.0.0.1:8644
+  multiplex_profiles: true
+
 # The allowlist. A repository or an event that is not here is answered 202 and
 # ignored, never 4xx — a failure list full of things that are not failures is
 # useless for spotting the real ones (docs/SYSTEMS.md section 3).
@@ -40,7 +54,8 @@ dead_letter_path: /var/log/dispatcher/dead-letter.jsonl
 
 # The outbound request timeout, and the bound on retries for a connection error
 # or a 5xx. A 4xx is never retried: it means the route, the secret or the
-# envelope is wrong, and repeating it repeats the failure.
+# envelope is wrong, and repeating it repeats the failure. The first attempt is
+# not one of the retries, so a wake makes at most `retry_bound + 1` requests.
 request_timeout: 10s
 retry_bound: 3
 

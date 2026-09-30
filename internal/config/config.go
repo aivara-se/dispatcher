@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -32,6 +33,7 @@ var Bots = []string{"mama", "meme", "mimi", "momo"}
 type Config struct {
 	Listen         Listen        `yaml:"listen"`
 	EndpointPath   string        `yaml:"endpoint_path"`
+	Gateway        Gateway       `yaml:"gateway"`
 	Repositories   []string      `yaml:"repositories"`
 	Events         []string      `yaml:"events"`
 	LogPath        string        `yaml:"log_path"`
@@ -41,6 +43,38 @@ type Config struct {
 	DedupTTL       time.Duration `yaml:"dedup_ttl"`
 	DedupBound     int           `yaml:"dedup_bound"`
 	Routes         []Route       `yaml:"routes"`
+}
+
+// Gateway is the far end of every wake: the host's Hermes gateway, whose webhook
+// adapter serves one route per bot. It is configuration rather than a constant
+// of the code because both of its fields are host facts — where the adapter
+// listens (8644 by default) and whether `gateway.multiplex_profiles` is on,
+// which decides whether a route is /p/<profile>/webhooks/<route> or
+// /webhooks/<route> (docs/SYSTEMS.md sections 5 and 10).
+type Gateway struct {
+	BaseURL           string `yaml:"base_url"`
+	MultiplexProfiles bool   `yaml:"multiplex_profiles"`
+}
+
+// validate refuses a gateway the wake could not be posted to: an address is
+// required, because there is no default from which the right route could be
+// guessed, and it has to be an absolute http(s) URL with no query or fragment,
+// because the route's own path is built onto it (docs/SYSTEMS.md section 5).
+func (g Gateway) validate() error {
+	if g.BaseURL == "" {
+		return fmt.Errorf("gateway.base_url is empty: every wake is posted to the gateway's own route")
+	}
+	base, err := url.Parse(g.BaseURL)
+	if err != nil {
+		return fmt.Errorf("gateway.base_url %q is not a URL: %w", g.BaseURL, err)
+	}
+	if (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" {
+		return fmt.Errorf("gateway.base_url %q is not an absolute http(s) URL", g.BaseURL)
+	}
+	if base.RawQuery != "" || base.Fragment != "" {
+		return fmt.Errorf("gateway.base_url %q carries a query or a fragment: the wake's own path is built onto it", g.BaseURL)
+	}
+	return nil
 }
 
 // Listen is the loopback address the receiver binds. TLS terminates in front of
@@ -63,11 +97,19 @@ func (l Listen) Addr() string {
 // bot's own route on the gateway holds, which the wake is signed with. They are
 // different values for different hops, so one leak is not a credential on both
 // sides (docs/SYSTEMS.md section 8).
+//
+// SignatureV2 declares that the route accepts the gateway's timestamped generic
+// signature — X-Webhook-Signature-V2 with X-Webhook-Timestamp — rather than the
+// X-Hub-Signature-256 form GitHub uses, which is the default and the one every
+// route has. Which form a route accepts is settled when the route is created,
+// so it is a switch here and not a branch in the code (docs/SYSTEMS.md
+// section 5).
 type Route struct {
 	Name             string `yaml:"name"`
 	Bot              string `yaml:"bot"`
 	Profile          string `yaml:"profile"`
 	GatewayRoute     string `yaml:"gateway_route"`
+	SignatureV2      bool   `yaml:"signature_v2"`
 	SecretRef        string `yaml:"secret"`
 	GatewaySecretRef string `yaml:"gateway_secret"`
 }
@@ -148,6 +190,9 @@ func (c *Config) validate() error {
 	}
 	if !strings.HasPrefix(c.EndpointPath, "/") {
 		return fmt.Errorf("endpoint_path is %q: it is a path, so it starts with /", c.EndpointPath)
+	}
+	if err := c.Gateway.validate(); err != nil {
+		return err
 	}
 	if len(c.Repositories) == 0 {
 		return fmt.Errorf("repositories is empty: nothing would be accepted")
