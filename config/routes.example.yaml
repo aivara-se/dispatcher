@@ -1,0 +1,81 @@
+# dispatcher routes — the behaviour of the service, and the names of the secrets
+# it uses. No secret value lives in this file
+# (docs/adrs/006-configuration-and-secrets.md): a reference names an environment
+# variable, or a path to a file whose mode is 600 and whose owner is the service
+# user. A leaked routes file leaks topology, and no access.
+#
+# This is the example. Copy it to config/routes.yaml and change what the host
+# owns; the shape stays:
+#
+#   bin/dispatcher --config config/routes.yaml
+
+# The loopback address the receiver binds. TLS terminates in front of it, at the
+# reverse proxy that gives GitHub a public path (docs/SYSTEMS.md section 10).
+listen:
+  address: 127.0.0.1
+  port: 8645
+
+# The path GitHub posts to.
+endpoint_path: /github
+
+# The allowlist. A repository or an event that is not here is answered 202 and
+# ignored, never 4xx — a failure list full of things that are not failures is
+# useless for spotting the real ones (docs/SYSTEMS.md section 3).
+repositories:
+  - aivara-se/dispatcher
+  - aivara-se/learn-chess
+events:
+  - issues
+  - issue_comment
+  - pull_request
+  - pull_request_review
+  - pull_request_review_comment
+  - check_run
+  - workflow_run
+
+# One audit line per delivery, JSON Lines, rotated at 8 MiB; and the file a wake
+# lands in once its retries are exhausted (docs/SYSTEMS.md sections 7 and 9).
+log_path: /var/log/dispatcher/audit.jsonl
+dead_letter_path: /var/log/dispatcher/dead-letter.jsonl
+
+# The outbound request timeout, and the bound on retries for a connection error
+# or a 5xx. A 4xx is never retried: it means the route, the secret or the
+# envelope is wrong, and repeating it repeats the failure.
+request_timeout: 10s
+retry_bound: 3
+
+# Delivery ids seen, with a TTL and a bound. In memory, so a restart loses it and
+# a redelivery after one can wake a bot twice — accepted, because the wake
+# carries a reason and the card is the truth (docs/adrs/004-idempotency-and-replay.md).
+dedup_ttl: 1h
+dedup_bound: 4096
+
+# One route per bot. `secret` is the value GitHub signs this webhook with, and
+# `gateway_secret` is the value the bot's own route on the gateway holds: two
+# different values for two different hops, so one leak is not a credential on
+# both sides (docs/SYSTEMS.md section 8).
+routes:
+  - name: mama
+    bot: mama
+    profile: mama
+    gateway_route: mama-queue
+    secret: DISPATCHER_GITHUB_SECRET_MAMA
+    gateway_secret: DISPATCHER_GATEWAY_SECRET_MAMA
+  - name: meme
+    bot: meme
+    profile: meme
+    gateway_route: meme-queue
+    secret: DISPATCHER_GITHUB_SECRET_MEME
+    gateway_secret: DISPATCHER_GATEWAY_SECRET_MEME
+  - name: mimi
+    bot: mimi
+    profile: mimi
+    gateway_route: mimi-queue
+    secret: DISPATCHER_GITHUB_SECRET_MIMI
+    gateway_secret: DISPATCHER_GATEWAY_SECRET_MIMI
+  - name: momo
+    bot: momo
+    profile: momo
+    gateway_route: momo-queue
+    secret: DISPATCHER_GITHUB_SECRET_MOMO
+    gateway_secret: DISPATCHER_GATEWAY_SECRET_MOMO
