@@ -34,5 +34,5 @@ That is the whole gate, and CI runs it on every pull request and on `main` (`.gi
 ## Documentation
 
 - [docs/PRODUCT.md](docs/PRODUCT.md) — what the service is for, and how it is judged.
-- [docs/SYSTEMS.md](docs/SYSTEMS.md) — the architecture, the interfaces, and what is still open.
+- [docs/SYSTEMS.md](docs/SYSTEMS.md) — the architecture, the interfaces, and the settled record.
 - [docs/adrs/000-record-architecture-decisions.md](docs/adrs/000-record-architecture-decisions.md) — how decisions are recorded, and the eight records beside it.

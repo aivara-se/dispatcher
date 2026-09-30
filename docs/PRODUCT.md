@@ -18,7 +18,7 @@ The operator of a small fleet of agents: one person running four bots in the `ai
 
 `dispatcher` is an HTTP service that GitHub calls. It verifies the payload's signature, decides which single agent the event belongs to, and wakes that agent through the Hermes gateway with the reason attached: one event, one wake, one bot.
 
-Two properties matter more than the mechanism. The event is a **reason, not an instruction** — the card, its comments and the board remain the source of truth, and the agent re-reads them, as it does today; the wake only says why now. And a bot is woken **once per fact, by exactly one source**: never the dispatcher and the poll for the same event.
+Two properties matter more than the mechanism. The event is a **reason, not an instruction** — the card, its comments and the board remain the source of truth, and the agent re-reads them, as it does today; the wake only says why now. And a bot is woken **once per fact, by exactly one source**: the dispatcher, because the poll is removed rather than left running beside it (section 5).
 
 ## 4. What it is not
 
@@ -32,4 +32,4 @@ Two properties matter more than the mechanism. The event is a **reason, not an i
 - **Wake latency**: seconds between the GitHub event and the agent's wake, rather than minutes.
 - **One wake per fact, and no missed fact**: a redelivered or coalesced event wakes an agent once; a comment, a reply, a review, a review request or a finished check run wakes the agent that owns it. The audit log is where both are read from.
 - **Nothing woken for nothing**: a bot with no work is not woken at all, and no event wakes a bot it does not concern.
-- **The poll switched off**: each bot's migration is one step at a known commit, and the end state is `queue_poll` scheduled for no bot — not two wake sources left running side by side.
+- **The poll removed, not shadowed**: the end state is reached *before* the dispatcher is live — every bot's `queue_poll` entry gone and its programs deleted with it — so there is no migration to run and no moment at which two sources could wake one bot. The cost is named rather than implied: during the gap, and during any later outage, the operator dispatches by hand and the recovery is fixing the dispatcher, not a return to the timer.
