@@ -64,8 +64,8 @@ const (
 
 // resolver is the router as this package uses it. The concrete *router.Router
 // satisfies it; substituting one inside this package's tests is how the
-// receiver's own branches are driven while card #8's Resolve is still the named
-// ErrNotImplemented.
+// receiver's own branches — a routing error, a filtered event — are driven
+// without a board to read.
 type resolver interface {
 	Resolve(ctx context.Context, ev router.Event) (router.Decision, error)
 }

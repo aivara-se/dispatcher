@@ -30,9 +30,16 @@ func readBody(w http.ResponseWriter, req *http.Request) ([]byte, error) {
 }
 
 // payload is the part of a GitHub delivery the service parses: the action, the
-// repository, the card number, the assignee and the actor. Every field a
-// decision uses is here, and none of them becomes a path, a command or a URL
-// (ADR 002). A field the router needs later is a field added here.
+// repository, the card number, the assignee, the actor, and whether a pull
+// request closed by merging. Every field a decision uses is here, and none of
+// them becomes a path, a command or a URL (ADR 002). A field the router needs
+// later is a field added here.
+//
+// A delivery that names a pull request carries the pull request's number in
+// `Card`, and reading the card that pull request belongs to is the board read's
+// business rather than this parse's. A check run and a workflow run name their
+// pull requests the same way, which is why the number is taken from the first
+// one rather than from a field of this service's own.
 type payload struct {
 	Action     string `json:"action"`
 	Repository struct {
@@ -42,8 +49,19 @@ type payload struct {
 		Number int `json:"number"`
 	} `json:"issue"`
 	PullRequest *struct {
-		Number int `json:"number"`
+		Number int  `json:"number"`
+		Merged bool `json:"merged"`
 	} `json:"pull_request"`
+	CheckRun *struct {
+		PullRequests []struct {
+			Number int `json:"number"`
+		} `json:"pull_requests"`
+	} `json:"check_run"`
+	WorkflowRun *struct {
+		PullRequests []struct {
+			Number int `json:"number"`
+		} `json:"pull_requests"`
+	} `json:"workflow_run"`
 	Assignee *struct {
 		Login string `json:"login"`
 	} `json:"assignee"`
@@ -81,6 +99,18 @@ func parseEvent(body []byte, event, delivery string) (router.Event, error) {
 	}
 	if p.PullRequest != nil {
 		number := p.PullRequest.Number
+		ev.Card = &number
+		ev.Merged = p.PullRequest.Merged
+	}
+	// A gate that finished names the pull request it ran on, not a card: the
+	// number goes where every other card number goes, and the board read is what
+	// knows which card that pull request belongs to.
+	if p.CheckRun != nil && len(p.CheckRun.PullRequests) > 0 {
+		number := p.CheckRun.PullRequests[0].Number
+		ev.Card = &number
+	}
+	if p.WorkflowRun != nil && len(p.WorkflowRun.PullRequests) > 0 {
+		number := p.WorkflowRun.PullRequests[0].Number
 		ev.Card = &number
 	}
 	if p.Assignee != nil {
