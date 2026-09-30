@@ -32,6 +32,16 @@ gateway:
   base_url: http://127.0.0.1:8644
   multiplex_profiles: true
 
+# The board the routing decision reads: the claimable card, and the assignee of
+# a card a silent delivery names (docs/SYSTEMS.md section 4). The token is a
+# secret like every other one — read-only for the board, kept outside this file
+# (§8) — and a reference that resolves to nothing stops the process at boot, so
+# this block is filled with something that resolves wherever the fleet runs.
+board:
+  owner: aivara-se
+  project: 2
+  token: DISPATCHER_BOARD_TOKEN
+
 # The allowlist. A repository or an event that is not here is answered 202 and
 # ignored, never 4xx — a failure list full of things that are not failures is
 # useless for spotting the real ones (docs/SYSTEMS.md section 3).

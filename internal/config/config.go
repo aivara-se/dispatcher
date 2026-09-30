@@ -30,6 +30,7 @@ type Config struct {
 	Listen         Listen        `yaml:"listen"`
 	EndpointPath   string        `yaml:"endpoint_path"`
 	Gateway        Gateway       `yaml:"gateway"`
+	Board          Board         `yaml:"board"`
 	Repositories   []string      `yaml:"repositories"`
 	Events         []string      `yaml:"events"`
 	LogPath        string        `yaml:"log_path"`
@@ -71,6 +72,48 @@ func (g Gateway) validate() error {
 		return fmt.Errorf("gateway.base_url %q carries a query or a fragment: the wake's own path is built onto it", g.BaseURL)
 	}
 	return nil
+}
+
+// Board is the organisation's project board the routing decision reads: the
+// claimable card, and the assignee of a card a silent delivery names
+// (docs/SYSTEMS.md section 4).
+//
+// It is configuration rather than a constant because all three of its fields
+// are facts of the host and the organisation rather than of the code: which
+// organisation, which project, and the *name* of the token the read uses. The
+// token is a secret like every other one — read-only for the board, kept
+// outside this file (docs/adrs/006-configuration-and-secrets.md).
+type Board struct {
+	Owner    string `yaml:"owner"`
+	Project  int    `yaml:"project"`
+	TokenRef string `yaml:"token"`
+}
+
+// validate refuses a board the claim rule could not read: the organisation and
+// the project are what the read is addressed to, and the token is what it
+// authenticates with — a missing one is a process that starts and then cannot
+// route a single silent event.
+func (b Board) validate() error {
+	if b.Owner == "" {
+		return fmt.Errorf("board.owner is empty: the board read is addressed to an organisation")
+	}
+	if b.Project < 1 {
+		return fmt.Errorf("board.project is %d: it is the project's number", b.Project)
+	}
+	if b.TokenRef == "" {
+		return fmt.Errorf("board.token is empty: the board is read with a token of its own")
+	}
+	if _, err := b.Token(); err != nil {
+		return fmt.Errorf("board.token: %w", err)
+	}
+	return nil
+}
+
+// Token resolves the board's reference to its value, the same way a route's
+// secrets do and with the same rule: the value is never logged, never named in
+// an error, and never written anywhere (docs/adrs/006-configuration-and-secrets.md).
+func (b Board) Token() (string, error) {
+	return ResolveSecret(b.TokenRef)
 }
 
 // Listen is the loopback address the receiver binds. TLS terminates in front of
@@ -188,6 +231,9 @@ func (c *Config) validate() error {
 		return fmt.Errorf("endpoint_path is %q: it is a path, so it starts with /", c.EndpointPath)
 	}
 	if err := c.Gateway.validate(); err != nil {
+		return err
+	}
+	if err := c.Board.validate(); err != nil {
 		return err
 	}
 	if len(c.Repositories) == 0 {

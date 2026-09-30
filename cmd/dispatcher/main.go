@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/aivara-se/dispatcher/internal/audit"
+	"github.com/aivara-se/dispatcher/internal/board"
 	"github.com/aivara-se/dispatcher/internal/config"
 	"github.com/aivara-se/dispatcher/internal/receiver"
 	"github.com/aivara-se/dispatcher/internal/router"
@@ -61,15 +62,18 @@ func run(configPath string, logger *log.Logger) error {
 	}
 	defer dead.Close()
 
-	// The board read is the one component this tree does not build: it is the
-	// router's own reader, handed in rather than built there, and what fills it
-	// — a read-only board token, and the card a pull request's number belongs
-	// to — is the deployment card's (#9). Until it is built, `router.New` is
-	// handed nil here, and the events whose delivery is silent resolve to no
-	// wake rather than to a guess. What is fixed here is that main builds the
-	// components once, in this order, and never changes again as they land.
+	// The board read is where a routing decision leaves the process: it is
+	// built here with the token the routes file names, so a reference that
+	// resolves to nothing refuses at boot rather than at the first silent event
+	// (docs/SYSTEMS.md sections 4 and 8). The components are built once, in
+	// this order, and `main` is not the file that changes as the packages
+	// below it grow.
 	client := &http.Client{Timeout: cfg.RequestTimeout}
-	rt := router.New(cfg, nil)
+	read, err := board.New(cfg, client)
+	if err != nil {
+		return err
+	}
+	rt := router.New(cfg, read)
 	poster := wake.New(cfg, client)
 	rec := receiver.New(cfg, rt, poster, trail, dead)
 

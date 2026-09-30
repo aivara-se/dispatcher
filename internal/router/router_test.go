@@ -49,17 +49,17 @@ func routes() *config.Config {
 // board is the router's reader, stubbed. Each read answers what the fixture
 // says and counts that it was asked at all.
 type board struct {
-	assignees     map[string]string // `repository#number` -> login
+	assignees     map[string][]string // `repository#number` -> logins, in the read's order
 	items         []router.Item
 	err           error
 	assigneeCalls int
 	itemCalls     int
 }
 
-func (b *board) Assignee(_ context.Context, repository string, card int) (string, error) {
+func (b *board) Assignees(_ context.Context, repository string, card int) ([]string, error) {
 	b.assigneeCalls++
 	if b.err != nil {
-		return "", b.err
+		return nil, b.err
 	}
 	return b.assignees[fmt.Sprintf("%s#%d", repository, card)], nil
 }
@@ -161,70 +161,77 @@ func fixtures() []fixture {
 		{
 			name:  "issues/closed with a silent delivery reads the card",
 			event: delivery("issues", "closed", card(8)),
-			board: &board{assignees: map[string]string{"aivara-se/dispatcher#8": "thani-sh-mama"}},
+			board: &board{assignees: map[string][]string{"aivara-se/dispatcher#8": {"thani-sh-mama"}}},
 			want:  "mama", reason: "aivara-se/dispatcher#8 was closed. Read the card.",
 			reads: reads{assignee: 1},
 		},
 		{
 			name:  "issues/reopened reads the card",
 			event: delivery("issues", "reopened", card(6)),
-			board: &board{assignees: map[string]string{"aivara-se/dispatcher#6": "thani-sh-mimi"}},
+			board: &board{assignees: map[string][]string{"aivara-se/dispatcher#6": {"thani-sh-mimi"}}},
 			want:  "mimi", reason: "aivara-se/dispatcher#6 was reopened. Read the card and act by its stage on the board.",
+			reads: reads{assignee: 1},
+		},
+		{
+			name:  "the operator beside a bot does not hide the bot",
+			event: delivery("issue_comment", "created", card(6)),
+			board: &board{assignees: map[string][]string{"aivara-se/dispatcher#6": {"thani-sh", "thani-sh-mimi"}}},
+			want:  "mimi", reason: "aivara-se/dispatcher#6 has a new comment, and it is yours. Read the card and answer it.",
 			reads: reads{assignee: 1},
 		},
 		{
 			name:  "issue_comment/created wakes the card's holder",
 			event: delivery("issue_comment", "created", card(6)),
-			board: &board{assignees: map[string]string{"aivara-se/dispatcher#6": "thani-sh-mimi"}},
+			board: &board{assignees: map[string][]string{"aivara-se/dispatcher#6": {"thani-sh-mimi"}}},
 			want:  "mimi", reason: "aivara-se/dispatcher#6 has a new comment, and it is yours. Read the card and answer it.",
 			reads: reads{assignee: 1},
 		},
 		{
 			name:  "pull_request_review_comment/created wakes the card's holder",
 			event: delivery("pull_request_review_comment", "created", card(12)),
-			board: &board{assignees: map[string]string{"aivara-se/dispatcher#12": "thani-sh-momo"}},
+			board: &board{assignees: map[string][]string{"aivara-se/dispatcher#12": {"thani-sh-momo"}}},
 			want:  "momo", reason: "aivara-se/dispatcher#12 has a new review comment, and it is yours. Read the review and answer it.",
 			reads: reads{assignee: 1},
 		},
 		{
 			name:  "pull_request_review/submitted wakes the card's holder",
 			event: delivery("pull_request_review", "submitted", card(12)),
-			board: &board{assignees: map[string]string{"aivara-se/dispatcher#12": "thani-sh-momo"}},
+			board: &board{assignees: map[string][]string{"aivara-se/dispatcher#12": {"thani-sh-momo"}}},
 			want:  "momo", reason: "aivara-se/dispatcher#12 had a review submitted on it. Read the review and act on it.",
 			reads: reads{assignee: 1},
 		},
 		{
 			name:  "pull_request/review_requested reads the card, not the actor",
 			event: delivery("pull_request", "review_requested", card(12)),
-			board: &board{assignees: map[string]string{"aivara-se/dispatcher#12": "thani-sh-meme"}},
+			board: &board{assignees: map[string][]string{"aivara-se/dispatcher#12": {"thani-sh-meme"}}},
 			want:  "meme", reason: "aivara-se/dispatcher#12 has your review requested on it. Read the review request and start it.",
 			reads: reads{assignee: 1},
 		},
 		{
 			name:  "pull_request/ready_for_review reads the card",
 			event: delivery("pull_request", "ready_for_review", card(12)),
-			board: &board{assignees: map[string]string{"aivara-se/dispatcher#12": "thani-sh-meme"}},
+			board: &board{assignees: map[string][]string{"aivara-se/dispatcher#12": {"thani-sh-meme"}}},
 			want:  "meme", reason: "aivara-se/dispatcher#12 is ready for review. Read the card and review it.",
 			reads: reads{assignee: 1},
 		},
 		{
 			name:  "pull_request/closed by merging reads the card",
 			event: merged(delivery("pull_request", "closed", card(12))),
-			board: &board{assignees: map[string]string{"aivara-se/dispatcher#12": "thani-sh-momo"}},
+			board: &board{assignees: map[string][]string{"aivara-se/dispatcher#12": {"thani-sh-momo"}}},
 			want:  "momo", reason: "aivara-se/dispatcher#12 had its pull request merged. Read the card and finish it.",
 			reads: reads{assignee: 1},
 		},
 		{
 			name:  "check_run/completed reads the card the run names",
 			event: delivery("check_run", "completed", card(12)),
-			board: &board{assignees: map[string]string{"aivara-se/dispatcher#12": "thani-sh-momo"}},
+			board: &board{assignees: map[string][]string{"aivara-se/dispatcher#12": {"thani-sh-momo"}}},
 			want:  "momo", reason: "aivara-se/dispatcher#12 had its check run finish. Read the card and see whether the gate passed.",
 			reads: reads{assignee: 1},
 		},
 		{
 			name:  "workflow_run/completed reads the card the run names",
 			event: delivery("workflow_run", "completed", card(12)),
-			board: &board{assignees: map[string]string{"aivara-se/dispatcher#12": "thani-sh-momo"}},
+			board: &board{assignees: map[string][]string{"aivara-se/dispatcher#12": {"thani-sh-momo"}}},
 			want:  "momo", reason: "aivara-se/dispatcher#12 had its workflow run finish. Read the card and see whether the gate passed.",
 			reads: reads{assignee: 1},
 		},
@@ -260,7 +267,7 @@ func fixtures() []fixture {
 		{
 			name:  "a comment held by the operator wakes nobody",
 			event: delivery("issue_comment", "created", card(6)),
-			board: &board{assignees: map[string]string{"aivara-se/dispatcher#6": "thani-sh"}},
+			board: &board{assignees: map[string][]string{"aivara-se/dispatcher#6": {"thani-sh"}}},
 			reads: reads{assignee: 1},
 		},
 		{
@@ -420,7 +427,7 @@ func TestNoFixtureWakesMoreThanOneBot(t *testing.T) {
 // A repository that is not on the allowlist concerns nobody here, and the
 // answer costs no board read: the table is not even reached (section 4).
 func TestTheAllowlistGatesBeforeAnythingElse(t *testing.T) {
-	b := &board{assignees: map[string]string{"thani-sh/other#1": "thani-sh-mimi"}}
+	b := &board{assignees: map[string][]string{"thani-sh/other#1": {"thani-sh-mimi"}}}
 	ev := delivery("issues", "assigned", card(1))
 	ev.Repository = "thani-sh/other"
 	ev.Assignee = "thani-sh-mimi"
@@ -485,4 +492,41 @@ func inFleet(bot string) bool {
 		}
 	}
 	return false
+}
+
+// The claim wake names the card it claimed rather than the card the delivery
+// named. Both are true facts and they are different cards: the delivery's
+// number belongs to the event, while the wake is about the cardable one — which
+// can sit in another repository — and the envelope the gateway groups bursts by
+// is built from this field, so borrowing the delivery's number would group a
+// claim with a genuine wake about it and swallow one of the two (section 5).
+func TestTheClaimWakeNamesTheCardItClaimed(t *testing.T) {
+	board := &board{items: []router.Item{
+		item(9, "Todo", "the card that was left"),
+		item(4, "Todo", "an older card nobody took"),
+	}}
+	got, err := router.New(routes(), board).Resolve(context.Background(), delivery("issues", "unassigned", card(9)))
+	if err != nil {
+		t.Fatalf("resolving: %v", err)
+	}
+	if !got.Wake {
+		t.Fatalf("the claim woke nobody: %+v", got)
+	}
+	if got.Card == nil || got.Card.Number != 4 || got.Card.Repository != allowlisted {
+		t.Errorf("the claim named %+v, want %s#4", got.Card, allowlisted)
+	}
+}
+
+// A wake that is about the delivery's own card says so by naming none: the
+// envelope already carries that card, and a second copy of it here would be a
+// second source of the same fact.
+func TestAWakeAboutTheDeliverysOwnCardNamesNoCardOfItsOwn(t *testing.T) {
+	got, err := router.New(routes(), &board{}).Resolve(context.Background(),
+		withAssignee(delivery("issues", "assigned", card(8)), "thani-sh-mimi"))
+	if err != nil {
+		t.Fatalf("resolving: %v", err)
+	}
+	if got.Card != nil {
+		t.Errorf("a wake about the delivery's own card named %+v, want none", got.Card)
+	}
 }

@@ -20,6 +20,10 @@ endpoint_path: /github
 gateway:
   base_url: http://127.0.0.1:8644
   multiplex_profiles: true
+board:
+  owner: aivara-se
+  project: 2
+  token: TEST_BOARD_TOKEN
 repositories:
   - aivara-se/dispatcher
 events:
@@ -64,6 +68,7 @@ func setSecrets(t *testing.T) {
 	t.Helper()
 	t.Setenv("TEST_GITHUB_SECRET", "github-value")
 	t.Setenv("TEST_GATEWAY_SECRET", "gateway-value")
+	t.Setenv("TEST_BOARD_TOKEN", "board-value")
 }
 
 func TestLoad(t *testing.T) {
@@ -90,6 +95,9 @@ func TestLoad(t *testing.T) {
 	if cfg.Gateway.BaseURL != "http://127.0.0.1:8644" || !cfg.Gateway.MultiplexProfiles {
 		t.Errorf("gateway = %+v, want the address and the multiplexing the file names", cfg.Gateway)
 	}
+	if cfg.Board.Owner != "aivara-se" || cfg.Board.Project != 2 {
+		t.Errorf("board = %+v, want the organisation and the project the file names", cfg.Board)
+	}
 	if len(cfg.Routes) != 1 || cfg.Routes[0].Bot != "mimi" || cfg.Routes[0].GatewayRoute != "mimi-queue" {
 		t.Fatalf("routes = %+v", cfg.Routes)
 	}
@@ -109,6 +117,15 @@ func TestLoad(t *testing.T) {
 	}
 	if inbound != "github-value" || outbound != "gateway-value" {
 		t.Errorf("the references resolved to the wrong hops: %q and %q", inbound, outbound)
+	}
+
+	// The board's token is a secret of its own and resolves the same way.
+	token, err := cfg.Board.Token()
+	if err != nil {
+		t.Fatalf("the board token must resolve: %v", err)
+	}
+	if token != "board-value" {
+		t.Errorf("the board token resolved to %q", token)
 	}
 }
 
@@ -141,6 +158,7 @@ func TestExampleRoutesFileLoads(t *testing.T) {
 		t.Setenv("DISPATCHER_GITHUB_SECRET_"+upper, "example-value")
 		t.Setenv("DISPATCHER_GATEWAY_SECRET_"+upper, "example-value")
 	}
+	t.Setenv("DISPATCHER_BOARD_TOKEN", "example-value")
 	cfg, err := config.Load(filepath.Join("..", "..", "config", "routes.example.yaml"))
 	if err != nil {
 		t.Fatalf("config/routes.example.yaml must load: %v", err)
@@ -177,6 +195,28 @@ func TestLoadResolvesASecretFile(t *testing.T) {
 		t.Fatalf("a mode-600 secret file is a reference ADR 006 allows: %v", err)
 	}
 	value, err := cfg.Routes[0].Secret()
+	if err != nil {
+		t.Fatalf("resolving the file: %v", err)
+	}
+	if value != "file-value" {
+		t.Errorf("the file is read and trimmed, got %q", value)
+	}
+}
+
+// The board's token is a reference like every other secret, so the file shape
+// works for it too — and the mode is part of allowing it.
+func TestLoadResolvesTheBoardTokenFile(t *testing.T) {
+	setSecrets(t)
+	path := filepath.Join(t.TempDir(), "board.token")
+	if err := os.WriteFile(path, []byte("file-value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	body := strings.Replace(valid(t), "  token: TEST_BOARD_TOKEN", "  token: "+path, 1)
+	cfg, err := config.Load(write(t, body))
+	if err != nil {
+		t.Fatalf("a mode-600 token file is a reference ADR 006 allows: %v", err)
+	}
+	value, err := cfg.Board.Token()
 	if err != nil {
 		t.Fatalf("resolving the file: %v", err)
 	}
@@ -279,6 +319,34 @@ func TestLoadRefuses(t *testing.T) {
 				return strings.Replace(valid(t), "endpoint_path: /github", `endpoint_path: github`, 1)
 			},
 			says: "starts with /",
+		},
+		{
+			name: "a board with no organisation",
+			body: func(t *testing.T) string {
+				return strings.Replace(valid(t), "  owner: aivara-se", `  owner: ""`, 1)
+			},
+			says: "board.owner",
+		},
+		{
+			name: "a board with no project",
+			body: func(t *testing.T) string {
+				return strings.Replace(valid(t), "  project: 2", "  project: 0", 1)
+			},
+			says: "board.project",
+		},
+		{
+			name: "a board with no token",
+			body: func(t *testing.T) string {
+				return strings.Replace(valid(t), "  token: TEST_BOARD_TOKEN", `  token: ""`, 1)
+			},
+			says: "board.token",
+		},
+		{
+			name: "a board token that resolves to nothing",
+			body: func(t *testing.T) string {
+				return strings.Replace(valid(t), "  token: TEST_BOARD_TOKEN", "  token: TEST_BOARD_TOKEN_UNSET", 1)
+			},
+			says: "neither set in the environment nor a path",
 		},
 		{
 			name: "an empty allowlist",
