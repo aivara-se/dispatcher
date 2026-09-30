@@ -17,6 +17,9 @@ const template = `listen:
   address: 127.0.0.1
   port: 8645
 endpoint_path: /github
+gateway:
+  base_url: http://127.0.0.1:8644
+  multiplex_profiles: true
 repositories:
   - aivara-se/dispatcher
 events:
@@ -84,8 +87,15 @@ func TestLoad(t *testing.T) {
 	if cfg.DedupBound != 16 || cfg.RetryBound != 3 {
 		t.Errorf("bounds = dedup %d, retry %d", cfg.DedupBound, cfg.RetryBound)
 	}
+	if cfg.Gateway.BaseURL != "http://127.0.0.1:8644" || !cfg.Gateway.MultiplexProfiles {
+		t.Errorf("gateway = %+v, want the address and the multiplexing the file names", cfg.Gateway)
+	}
 	if len(cfg.Routes) != 1 || cfg.Routes[0].Bot != "mimi" || cfg.Routes[0].GatewayRoute != "mimi-queue" {
 		t.Fatalf("routes = %+v", cfg.Routes)
+	}
+	// A route that names no signature form takes the one both hops share.
+	if cfg.Routes[0].SignatureV2 {
+		t.Errorf("a route that names no signature form picked the timestamped one")
 	}
 
 	// The reference resolves to the value, and the two hops are two values.
@@ -99,6 +109,22 @@ func TestLoad(t *testing.T) {
 	}
 	if inbound != "github-value" || outbound != "gateway-value" {
 		t.Errorf("the references resolved to the wrong hops: %q and %q", inbound, outbound)
+	}
+}
+
+// A route may declare the gateway's timestamped signature form instead of the
+// one both hops share. Which form a route accepts is settled when the route is
+// created, so it is a field of the route and not a branch in the code
+// (docs/SYSTEMS.md section 5).
+func TestLoadReadsTheSignatureForm(t *testing.T) {
+	setSecrets(t)
+	body := strings.Replace(valid(t), "    gateway_route: mimi-queue\n", "    gateway_route: mimi-queue\n    signature_v2: true\n", 1)
+	cfg, err := config.Load(write(t, body))
+	if err != nil {
+		t.Fatalf("a route that declares the timestamped form must load: %v", err)
+	}
+	if !cfg.Routes[0].SignatureV2 {
+		t.Errorf("signature_v2: true did not reach the route")
 	}
 }
 
@@ -201,6 +227,34 @@ func TestLoadRefuses(t *testing.T) {
 				return strings.Replace(valid(t), "\n    gateway_secret: TEST_GATEWAY_SECRET", "", 1)
 			},
 			says: "gateway_secret",
+		},
+		{
+			name: "no gateway address",
+			body: func(t *testing.T) string {
+				return strings.Replace(valid(t), "  base_url: http://127.0.0.1:8644\n", "", 1)
+			},
+			says: "gateway.base_url",
+		},
+		{
+			name: "a gateway address that is not a URL",
+			body: func(t *testing.T) string {
+				return strings.Replace(valid(t), "base_url: http://127.0.0.1:8644", "base_url: 127.0.0.1:8644", 1)
+			},
+			says: "is not a URL",
+		},
+		{
+			name: "a gateway address that is not http(s)",
+			body: func(t *testing.T) string {
+				return strings.Replace(valid(t), "base_url: http://127.0.0.1:8644", "base_url: ftp://127.0.0.1:8644", 1)
+			},
+			says: "not an absolute http(s) URL",
+		},
+		{
+			name: "a gateway address carrying a query",
+			body: func(t *testing.T) string {
+				return strings.Replace(valid(t), "base_url: http://127.0.0.1:8644", "base_url: http://127.0.0.1:8644/?k=v", 1)
+			},
+			says: "query or a fragment",
 		},
 		{
 			name: "no port",
