@@ -50,9 +50,10 @@ retry_bound: 3
 dedup_ttl: 1h
 dedup_bound: 4096
 
-# One route per bot. `secret` is the value GitHub signs this webhook with, and
-# `gateway_secret` is the value the bot's own route on the gateway holds: two
-# different values for two different hops, so one leak is not a credential on
+# One route per bot. Each field holds the *name* of a secret, never the value
+# itself: `secret` names what GitHub signs this webhook with, and
+# `gateway_secret` names what the bot's own route on the gateway holds. Two
+# different secrets for two different hops, so one leak is not a credential on
 # both sides (docs/SYSTEMS.md section 8).
 routes:
   - name: mama
