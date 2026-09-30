@@ -250,6 +250,16 @@ func (rec *Receiver) serve(w http.ResponseWriter, req *http.Request) {
 	if ev.Card != nil {
 		envelope.Card = wake.CardFor(ev.Repository, *ev.Card)
 	}
+	if decision.Card != nil {
+		// A claim wake is about the card it names rather than the card the
+		// delivery named: the delivery's own number belongs to the fact that
+		// arrived, while the wake is about the claimable card, which can sit in
+		// another repository. The gateway groups bursts by this pair, so naming
+		// the delivery's number here would group a claim with a genuine wake
+		// about it and one of the two would be swallowed (sections 4 and 5).
+		envelope.Repository = decision.Card.Repository
+		envelope.Card = wake.CardFor(decision.Card.Repository, decision.Card.Number)
+	}
 
 	outcome := rec.wake.Post(req.Context(), wakeRoute, envelope)
 	if !outcome.OK() {

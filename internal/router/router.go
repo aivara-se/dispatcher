@@ -68,11 +68,17 @@ type Event struct {
 // claim actions make it — the card, the free bot and the claimable card all
 // come from that one read.
 type Board interface {
-	// Assignee is the login holding the card this delivery names, and "" when
-	// nobody holds it. A delivery that names a pull request carries the pull
-	// request's number, and reading the card that pull request belongs to is
-	// this read's business rather than the router's.
-	Assignee(ctx context.Context, repository string, card int) (string, error)
+	// Assignees is the logins holding the card this delivery names, in the
+	// order the board gave them, and none when nobody holds it. A delivery
+	// that names a pull request carries the pull request's number, and reading
+	// the card that pull request belongs to is this read's business rather
+	// than the router's.
+	//
+	// It is a list and not one login because a card can carry more than one —
+	// the operator beside a bot, or two bots during a hand-off — and a read
+	// that answered one of them would make "who holds it" depend on the order
+	// the board happened to give.
+	Assignees(ctx context.Context, repository string, card int) ([]string, error)
 
 	// Items is every card on the board, for the claim wake and for the actions
 	// that can leave a card with nobody on it.
@@ -94,6 +100,21 @@ type Decision struct {
 	Wake   bool
 	Bot    string
 	Reason string
+
+	// Card is the card the wake is about, when it is not the one the delivery
+	// named. A claim wake is about the card that is claimable, which can sit in
+	// a repository the event did not come from, and the envelope the gateway
+	// groups bursts by has to name it rather than the delivery's own card —
+	// otherwise a claim is grouped with a genuine wake about the number it
+	// borrowed and one of the two is swallowed (sections 4 and 5). Nil means
+	// the wake is about the delivery's own card.
+	Card *Card
+}
+
+// Card is one card, named the way the board names it.
+type Card struct {
+	Repository string
+	Number     int
 }
 
 // Router resolves events. It is constructed once and used from more than one
@@ -180,11 +201,11 @@ func (r *Router) holder(ctx context.Context, row rule, ev Event) (Decision, erro
 	if ev.Card == nil || r.board == nil {
 		return Decision{}, nil
 	}
-	login, err := r.board.Assignee(ctx, ev.Repository, *ev.Card)
+	logins, err := r.board.Assignees(ctx, ev.Repository, *ev.Card)
 	if err != nil {
 		return Decision{}, fmt.Errorf("the card's assignee could not be read: %w", err)
 	}
-	if bot := r.bot(login); bot != "" {
+	if bot := r.owner(logins); bot != "" {
 		return held(row, bot, ev), nil
 	}
 	// Nobody is woken: either nobody holds the card, or whoever holds it is not
@@ -241,6 +262,7 @@ func (r *Router) claim(items []Item) Decision {
 		Bot:  bot,
 		Reason: fmt.Sprintf("%s#%d is claimable, and it is your turn: %q. It is in %s on the board with nobody on it. Read the card and claim it.",
 			card.Repository, card.Number, card.Title, columnTodo),
+		Card: &Card{Repository: card.Repository, Number: card.Number},
 	}
 }
 

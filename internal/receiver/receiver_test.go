@@ -610,7 +610,7 @@ func TestAValidDeliveryIsWokenWithTheEnvelope(t *testing.T) {
 // rather than one a stub returned.
 func TestADeliveryThroughTheRealRouterWakesTheCardHolder(t *testing.T) {
 	f := newFixture(t)
-	holder := &stubBoard{assignee: "thani-sh-mimi"}
+	holder := &stubBoard{assignees: []string{"thani-sh-mimi"}}
 	f.rec.router = router.New(f.cfg, holder)
 
 	body := issueComment(6)
@@ -683,14 +683,14 @@ func issueComment(number int) []byte {
 // stubBoard is the board the real router is handed here: one holder, no items,
 // and a count of how often it was asked.
 type stubBoard struct {
-	assignee string
-	err      error
-	calls    int
+	assignees []string
+	err       error
+	calls     int
 }
 
-func (b *stubBoard) Assignee(context.Context, string, int) (string, error) {
+func (b *stubBoard) Assignees(context.Context, string, int) ([]string, error) {
 	b.calls++
-	return b.assignee, b.err
+	return b.assignees, b.err
 }
 
 func (b *stubBoard) Items(context.Context) ([]router.Item, error) {
@@ -976,5 +976,44 @@ func TestNoSecretAndNoPayloadTextReachesTheFiles(t *testing.T) {
 		if strings.Contains(string(raw), stranger) {
 			t.Errorf("%s carries the payload's text", name)
 		}
+	}
+}
+
+// The claim wake carries the card it claimed, in the envelope's repository and
+// card both. The gateway groups bursts by that pair, so a claim that borrowed
+// the delivery's own number could be grouped with a genuine wake about it and
+// one of the two would be swallowed (docs/SYSTEMS.md sections 4 and 5).
+func TestAClaimWakeCarriesTheCardItClaimed(t *testing.T) {
+	f := newFixture(t)
+	const claim = "aivara-se/learn-chess#43 is claimable, and it is your turn."
+	f.router.set(router.Decision{
+		Wake:   true,
+		Bot:    "mimi",
+		Reason: claim,
+		Card:   &router.Card{Repository: "aivara-se/learn-chess", Number: 43},
+	}, nil)
+
+	body := issueAssigned(9)
+	rec := f.post(body, headers(body, "d-9"))
+	if rec.Code != http.StatusAccepted || replyOf(t, rec).Status != "accepted" {
+		t.Fatalf("a claim wake = %d %s, want 202 accepted", rec.Code, rec.Body.String())
+	}
+
+	_, envelope, calls := f.poster.posted()
+	if calls != 1 {
+		t.Fatalf("the wake was posted %d time(s), want 1", calls)
+	}
+	want := wake.Envelope{
+		Source:     "dispatcher",
+		Delivery:   "d-9",
+		Event:      "issues",
+		Action:     "assigned",
+		Repository: "aivara-se/learn-chess",
+		Card:       &wake.Card{Number: 43, URL: "https://github.com/aivara-se/learn-chess/issues/43"},
+		Bot:        "mimi",
+		Reason:     claim,
+	}
+	if !reflect.DeepEqual(envelope, want) {
+		t.Errorf("the envelope was\n  %+v\nwant\n  %+v", envelope, want)
 	}
 }
