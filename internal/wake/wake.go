@@ -129,7 +129,7 @@ func (p *Poster) Post(ctx context.Context, route config.Route, env Envelope) Out
 	var outcome Outcome
 	for wait := firstBackoff; ; {
 		outcome.Attempts++
-		outcome.Status, outcome.Err = p.send(ctx, target, route, secret, body)
+		outcome.Status, outcome.Err = p.send(ctx, target, route, secret, env, body)
 		if !retryable(outcome.Status, outcome.Err) {
 			return outcome
 		}
@@ -153,7 +153,10 @@ func (p *Poster) Post(ctx context.Context, route config.Route, env Envelope) Out
 // retryable is the one rule that decides whether another attempt can help: a
 // connection error or a 5xx, and nothing else. A 4xx repeats the failure, and a
 // request this process cannot even build is a fault in the process rather than
-// in the delivery, so neither is retried (docs/SYSTEMS.md section 5).
+// in the delivery: it comes back as a plain error and not a *url.Error, so it is
+// not retried. Every *url.Error therefore is retried, a redirect loop and a
+// protocol error with it, because telling those apart from a refused connection
+// is a classifier this rule does not need (docs/SYSTEMS.md section 5).
 func retryable(status int, err error) bool {
 	if err == nil {
 		return status >= http.StatusInternalServerError
@@ -182,12 +185,27 @@ func (p *Poster) endpoint(route config.Route) (*url.URL, error) {
 // send makes one attempt: the envelope, the headers the route's signature form
 // calls for, and an answer that is drained and dropped. It returns the status
 // the gateway answered, or zero when no answer came.
-func (p *Poster) send(ctx context.Context, target *url.URL, route config.Route, secret string, body []byte) (int, error) {
+//
+// The id headers are not decoration. The far end keys its own dedup on a header
+// rather than on the envelope — the adapter reads X-GitHub-Delivery and falls
+// back to a millisecond clock — so an attempt without it is a new delivery to
+// the gateway, and a retry becomes a second agent run for one fact. The same
+// envelope is passed on every attempt, so the id is the same one; the event
+// header is what tells the adapter which event it is holding, because the
+// envelope's field is named event and its own event_type/type fields are not
+// ours to fill.
+func (p *Poster) send(ctx context.Context, target *url.URL, route config.Route, secret string, env Envelope, body []byte) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(body))
 	if err != nil {
 		return 0, fmt.Errorf("wake request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if env.Delivery != "" {
+		req.Header.Set("X-GitHub-Delivery", env.Delivery)
+	}
+	if env.Event != "" {
+		req.Header.Set("X-GitHub-Event", env.Event)
+	}
 	if route.SignatureV2 {
 		// The gateway's timestamped generic form is signed per attempt, so a
 		// retry carries its own timestamp inside the replay window rather than
