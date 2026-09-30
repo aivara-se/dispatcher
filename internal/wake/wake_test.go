@@ -224,6 +224,38 @@ func TestPostRetriesA5xxAndStopsAtTheFirstSuccess(t *testing.T) {
 	}
 }
 
+// The far end keys its own dedup on a header, not on the envelope: the adapter
+// builds the key from X-GitHub-Delivery and falls back to a millisecond clock,
+// so the id has to travel in the header and be the same one on every attempt. A
+// retry is then the same delivery to the gateway rather than a second one, which
+// is the property ADR 004 asks both hops to hold at the same rate. The event
+// header is the same idea: the adapter reads its event type from the headers,
+// and the envelope's own field is named `event`, so without it every wake arrives
+// as "unknown" and a route that declares its events answers an accepted-looking
+// 200 that nothing ran.
+func TestPostCarriesTheDeliveryIdOnEveryAttempt(t *testing.T) {
+	s := newStub(t, http.StatusBadGateway, http.StatusAccepted)
+	cfg := routes(t, s.server.URL)
+	env := envelope()
+
+	outcome := post(t, cfg, s.server.Client(), env)
+	if !outcome.OK() || outcome.Attempts != 2 {
+		t.Fatalf("outcome = %+v, want the second attempt accepted", outcome)
+	}
+	got := s.requests()
+	if len(got) != 2 {
+		t.Fatalf("the gateway saw %d request(s), want 2", len(got))
+	}
+	for i, request := range got {
+		if id := request.header.Get("X-GitHub-Delivery"); id != env.Delivery {
+			t.Errorf("attempt %d carried X-GitHub-Delivery %q, want the envelope's %q", i+1, id, env.Delivery)
+		}
+		if event := request.header.Get("X-GitHub-Event"); event != env.Event {
+			t.Errorf("attempt %d carried X-GitHub-Event %q, want the envelope's %q", i+1, event, env.Event)
+		}
+	}
+}
+
 // A 4xx is never retried: it means the route, the secret or the envelope is
 // wrong, and repeating it repeats the failure (docs/SYSTEMS.md sections 5 and 7).
 func TestPostNeverRetriesA4xx(t *testing.T) {
