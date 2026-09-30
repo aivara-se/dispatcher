@@ -1,4 +1,4 @@
-# job-dispatcher: systems
+# dispatcher: systems
 
 This is the architecture as intended: the components, what crosses between them, and which parts are settled. The product is in [PRODUCT.md](PRODUCT.md), the decisions and what they rejected are in [adrs/000-record-architecture-decisions.md](adrs/000-record-architecture-decisions.md) and the records beside it, and the questions still open are collected in [section 12](#12-settled-and-open).
 
@@ -6,7 +6,7 @@ This is the architecture as intended: the components, what crosses between them,
 
 ```mermaid
 flowchart LR
-  GH["GitHub"] -->|"webhook POST"| D["job-dispatcher"]
+  GH["GitHub"] -->|"webhook POST"| D["dispatcher"]
   D -->|"signed wake POST"| GW["Hermes gateway"]
   GW -->|"one profile's agent run"| B["the bot"]
   B -->|"its own delivery"| CHAT["the bot's chat"]
@@ -74,14 +74,14 @@ The dispatcher composes the wake text and posts a single JSON envelope to the ta
 
 ```json
 {
-  "source": "job-dispatcher",
+  "source": "dispatcher",
   "delivery": "<the GitHub delivery id>",
   "event": "issues",
   "action": "assigned",
-  "repository": "aivara-se/job-dispatcher",
-  "card": { "number": 1, "url": "https://github.com/aivara-se/job-dispatcher/issues/1" },
+  "repository": "aivara-se/dispatcher",
+  "card": { "number": 1, "url": "https://github.com/aivara-se/dispatcher/issues/1" },
   "bot": "momo",
-  "reason": "aivara-se/job-dispatcher#1 was assigned to you: \"The first pull request: the documents that define job-dispatcher\". It is in Todo on the board. Read the card and start it."
+  "reason": "aivara-se/dispatcher#1 was assigned to you: \"The first pull request: the documents that define dispatcher\". It is in Todo on the board. Read the card and start it."
 }
 ```
 

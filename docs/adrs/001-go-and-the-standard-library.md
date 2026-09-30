@@ -8,7 +8,7 @@ This service is a long-running network process that must be up when cron is not:
 
 Go, standard library only. `net/http` serves the receiver and makes the outbound dispatch; `crypto/hmac` and `crypto/subtle` verify signatures; `encoding/json` parses what the verifier has already signed off. Nothing is added to the module's requires until a real need appears, and the bar for that need is written in the pull request that adds it.
 
-The binary is `cmd/job-dispatcher`, with the receiver, the router, the dispatcher, the config and the audit log as separate packages under `internal/`. The language floor is Go 1.26, the version the organisation's other Go service builds against.
+The binary is `cmd/dispatcher`, with the receiver, the router, the dispatcher, the config and the audit log as separate packages under `internal/`. The language floor is Go 1.26, the version the organisation's other Go service builds against.
 
 ## Consequences
 

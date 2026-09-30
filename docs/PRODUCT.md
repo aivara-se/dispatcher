@@ -1,4 +1,4 @@
-# job-dispatcher: product
+# dispatcher: product
 
 This is the product document: what the service is, who it is for, and how it is judged. The architecture is in [SYSTEMS.md](SYSTEMS.md), and the decisions behind it are in [adrs/000-record-architecture-decisions.md](adrs/000-record-architecture-decisions.md) and the records beside it.
 
@@ -16,7 +16,7 @@ The operator of a small fleet of agents: one person running four bots in the `ai
 
 ## 3. What this is
 
-`job-dispatcher` is an HTTP service that GitHub calls. It verifies the payload's signature, decides which single agent the event belongs to, and wakes that agent through the Hermes gateway with the reason attached: one event, one wake, one bot.
+`dispatcher` is an HTTP service that GitHub calls. It verifies the payload's signature, decides which single agent the event belongs to, and wakes that agent through the Hermes gateway with the reason attached: one event, one wake, one bot.
 
 Two properties matter more than the mechanism. The event is a **reason, not an instruction** — the card, its comments and the board remain the source of truth, and the agent re-reads them, as it does today; the wake only says why now. And a bot is woken **once per fact, by exactly one source**: never the dispatcher and the poll for the same event.
 
