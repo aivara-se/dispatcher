@@ -1,6 +1,6 @@
 # dispatcher: systems
 
-This is the architecture as intended: the components, what crosses between them, and which parts are settled. The product is in [PRODUCT.md](PRODUCT.md), the rules the service and the agents follow are in [RULESET.md](RULESET.md), the decisions and what they rejected are in [adrs/000-record-architecture-decisions.md](adrs/000-record-architecture-decisions.md) and the records beside it, and how each question that shaped it was settled is collected in [section 12](#12-settled).
+This is the architecture as intended: the components, what crosses between them, and which parts are settled. The product is in [PRODUCT.md](PRODUCT.md), the decisions and what they rejected are in [adrs/000-record-architecture-decisions.md](adrs/000-record-architecture-decisions.md) and the records beside it, and how each question that shaped it was settled is collected in [section 12](#12-settled).
 
 ## 1. The shape
 
@@ -10,7 +10,7 @@ flowchart LR
   D -->|"signed wake POST"| GW["Hermes gateway"]
   GW -->|"one profile's agent run"| B["the bot"]
   B -->|"its own delivery"| CHAT["the bot's chat"]
-  D -->|"read, and one write: the assignee"| API["GitHub API and board"]
+  D -->|"API read when the payload is silent"| API["GitHub API and board"]
   D -->|"one line per delivery"| LOG["audit log"]
 ```
 
@@ -18,9 +18,7 @@ flowchart LR
 
 - **The receiver** — one HTTP server, one listener, loopback only. It is the only thing in the service that faces the network, and TLS terminates in front of it, not in it.
 - **The verifier** — checks the signature over the raw body before anything parses it, against the route's own secret.
-- **The router** — decides which single bot an event belongs to and who holds a card, from the payload, from one board read where the payload is silent, and under the precedence in [RULESET.md](RULESET.md).
-- **The assigner** — writes the one board field the service owns, the assignee of a card nobody holds, and starts the session that goes with it.
-- **The queue and the sessions** — in memory: one session per bot, opened when the wake it carries is accepted and closed when its card leaves `In Progress`, and one queue of the cards waiting for a bot that is in one.
+- **The router** — decides which single bot an event belongs to, from the payload, and from one board read where the payload is silent.
 - **The dispatcher** — composes the wake text and posts it to that bot's gateway webhook route, signed with that route's secret.
 - **The dedup cache** — delivery ids seen, with a TTL. In memory.
 - **The audit log** — one line per delivery, in order, on disk.
@@ -34,9 +32,8 @@ flowchart LR
 4. The repository and event must be on the allowlist. An event that is not on it is accepted and ignored — see the response codes below.
 5. The delivery id is checked against the dedup cache. A delivery already seen was dealt with; it is answered as a duplicate and nothing is dispatched.
 6. The router resolves the event to exactly one bot (section 4), reading the card's board item when the payload does not carry the owning bot.
-7. A card with nobody on it is assigned first: the assigner writes the assignee of the bot the rule picked, and that write is part of the wake's reason. A card whose bot already holds a session is queued instead (section 4).
-8. The dispatcher renders the wake and posts it to that bot's gateway route (section 5).
-9. One line is appended to the audit log whatever happened: the ids, the decision, the assignee it wrote when it wrote one, and the outcome.
+7. The dispatcher renders the wake and posts it to that bot's gateway route (section 5).
+8. One line is appended to the audit log whatever happened: the ids, the decision, and the outcome.
 
 The inbound headers are the only ones read: `X-Hub-Signature-256`, `X-GitHub-Event`, `X-GitHub-Delivery`. The endpoint path is a config value; `POST /github` is the name used here.
 
@@ -52,39 +49,24 @@ Response codes, chosen to match the gateway adapter's own set so that one mental
 
 An event that is valid but not ours is answered `202`, never `4xx`: a 4xx makes GitHub show a failing delivery for something that is not a failure, and the failure list is then useless for spotting the real ones.
 
-## 4. Routing and assignment — who holds a card, and which bot a fact wakes
+## 4. Routing — which event belongs to which bot
 
-Two questions are answered in one place, one rule each, under one precedence, stated in full in [RULESET.md](RULESET.md): **the operator, then the `blocked` label, then the assignee**. The fleet is the four bots the queue config already names — `mama`, `meme`, `mimi`, `momo` — each with its profile and its GitHub login.
+One place, one rule. The fact that decides is the card's **assignee** — the payload carries it for most events, and where it does not the router reads the card's board item for it. The card's board **stage** comes from that same read and only the claim wake below uses it: a routing decision the payload can answer never spends a board call. The fleet it routes over is the four bots the queue config already names — `mama`, `meme`, `mimi`, `momo` — each with its profile and its GitHub login.
 
 - The repository an event names must be on the allowlist; if it is not, the event concerns nobody here.
-- An actor or assignee whose login is `thani-sh-<bot>` maps to profile `<bot>`. Nothing else maps to a bot, and the operator's own login maps to nobody: a card the operator assigned wakes no bot.
-- **The fact that decides who is woken is the card's assignee**, wherever the payload carries it. Where it does not — a comment, a check run, the board's own event — the router reads the card's board item for it. A review request is the exception: the delivery names the reviewer, and the reviewer is who is woken. A routing decision the payload can answer never spends a board call.
-- **A card with nobody on it is assigned here, not claimed.** The router picks the first bot in the routes file's order (section 8) that has no open session and no card in `In Progress`, the assigner writes that login to the card, and the same decision wakes that bot. Two bots cannot be handed one card, because the pick is a function of the board and the fleet's order rather than a race the bots run between themselves.
-- **A bot holds one session at a time.** The pick never lands on a bot that is already in one, and its queued cards wait rather than starting a second run (section 4).
-- **`blocked` outranks the assignee.** A blocked card or pull request wakes nobody, and the label coming off is itself a wake — the only exit from a block. No other label is a wake.
-- The event's action decides whether the fact is a wake at all. An assignment, a comment, a review, a review request, a finished check run, `blocked` going on or off and the board saying a card arrived or moved are; a label nobody acts on, a pull request pushed to and a dismissed review are not.
-- When a read is inconclusive the event is not a wake for anyone: it is logged and dropped. The service never wakes more than one bot for one event, and never all four.
+- An actor or assignee whose login is `thani-sh-<bot>` maps to profile `<bot>`. Nothing else maps to a bot, and the operator's own login maps to nobody.
+- The event's action decides whether the fact is a wake at all. An assignment, a comment, a review, a review request and a finished check run are; a label edit nobody acts on is not.
+- When the payload does not carry the owning bot — a comment on an unassigned card, a review request, a check run — the router reads the card's board item and uses its assignee. When that read is inconclusive, the event is not a wake for anyone: it is logged and dropped. The service never wakes more than one bot for one event, and never all four.
+- **A card with nobody on it is the claim case.** An accepted `issues` action on a card nobody holds — an `unassigned`, or a card that has just arrived (`opened`) — resolves to the *claim* wake: the router computes the claimable card from the board (the lowest-numbered card on the board, in `Todo`, unassigned, and not labelled `blocked`) and wakes the one bot whose turn it is. The claimant order is the order of the routes file's own entries (section 8) — `mama`, `meme`, `mimi`, `momo` today, which is also the fleet's login order — so the rule is configuration and not code. Once the poll is gone this is the only claim path there will be (section 11), which is why the rule is carried here deliberately instead of inherited by accident. A card that is not on the board is not the claim case, and an inconclusive read is dropped as above.
 - The bots' profiles and logins are read from the same config the monitors read, so a new bot is a config entry and not a code change.
 - **The read itself** is `internal/board`, built once at boot with the token the routes file names (section 8); a reference that resolves to nothing stops the process there rather than at the first silent event. One card is read through the REST API, which answers an issue and a pull request alike: a delivery that names a pull request carries the pull request's number, so the card is the issue that pull request closes — the lowest-numbered one in the same repository when it closes several. The whole board is read through the GraphQL API's project items, a page at a time; an item that is not a card in a repository is not read. A card may carry more than one login (the operator beside a bot), and the router takes the first that is one of the fleet's. A read that fails is an error and never a `no wake`: the request path answers `503` and GitHub delivers the fact again (sections 3 and 7).
-- **The write** is the same package's one mutation: the assignee of a card nobody holds, and nothing else. It moves no card, closes nothing, writes no comment, and a write that fails is an error like a failed read — the delivery is retried or dead-lettered, the card stays unassigned, and the next event tries again.
-
-### The session and the queue
-
-A **session** is a run the service started: one per bot, opened when the gateway accepts the wake for a card and closed when that card leaves `In Progress` — moved to `Done`, closed, or handed to another bot. A review is not a session; review duty takes no slot and never blocks a card.
-
-The **queue** holds the cards waiting for a bot that is already in a session, in the order they arrived, and is drained as sessions close. Both live in memory, so a restart forgets them — and the board is what reconciles that: a card in `In Progress` is a session whatever the service remembers, and an assigned card whose bot was never woken is visible as exactly that. The board is re-read when a session is closed rather than trusting the delivery alone, so a payload whose shape differs from what the service expects costs one read and never a wrong decision.
-
-### The board's own event
-
-A card's arrival, its column and its assignee are told by `projects_v2_item`, the organisation project's item event: it is how the service hears that nothing was assigned to a card rather than hearing it only when a repository event happens to mention the card. Like every other delivery it is a reason to re-read, not a fact to trust on its own.
 
 Events this service should accept, and why each is worth a wake:
 
-- `issues`: opened, assigned, unassigned, labeled, unlabeled, closed, reopened — a card's holder or stage moved, a card arrived with nobody on it, or a `blocked` label went on or off.
-- `projects_v2_item`: the board's own event — a card was added, moved or assigned.
+- `issues`: assigned, unassigned, opened, closed, reopened — a card's holder or stage moved, or a card arrived with nobody on it (the claim case above).
 - `issue_comment` and `pull_request_review_comment`: a reply landed on a card or a review.
 - `pull_request_review`: a review was submitted, including one that requests changes.
-- `pull_request`: review requested, ready for review, labeled, unlabeled, merged.
+- `pull_request`: review requested, ready for review, merged.
 - `check_run` and `workflow_run`: a gate finished, which is what decides whether an agent's own work shipped.
 - `push` to a repository a card depends on, only if a real need appears. Defer until then.
 
@@ -105,13 +87,13 @@ The dispatcher composes the wake text and posts a single JSON envelope to the ta
 }
 ```
 
-- **Which card the envelope names**: the card the delivery named, and for the wake that follows an assignment it is the card the assigner just wrote — which can be a card the event did not come from. The envelope's `repository` and `card` are both that card's, because the route groups bursts by the pair: an assignment that borrowed the delivery's own number could be grouped with a genuine wake about it, and one of the two would be swallowed.
+- **Which card the envelope names**: for every wake it is the card the delivery named, and for a claim wake it is the card the claim resolved — the claimable card, in its own repository, which can be one the event did not come from. The envelope's `repository` and `card` are both that card's, because the route groups bursts by the pair: a claim that borrowed the delivery's own number could be grouped with a genuine wake about it, and one of the two would be swallowed.
 - **Outbound URL**: the bot's own route on the gateway, whose address is the routes file's `gateway.base_url` — `/webhooks/<route>` on a single-profile gateway, `/p/<profile>/webhooks/<route>` where `gateway.multiplex_profiles` is enabled. One route per bot, its own secret, which is what makes "wake exactly this profile" a property of the URL and the signature rather than of the code.
 - **Signature**: the dispatcher signs the request the way GitHub signs, `X-Hub-Signature-256: sha256=<hex HMAC-SHA256 over the raw body>`, so the gateway has one signature story for both hops. The adapter also documents a timestamped generic V2 signature (`X-Webhook-Signature-V2` with `X-Webhook-Timestamp`, HMAC over `<timestamp>.<body>`), which carries replay protection the plain form does not; if the route accepts it, prefer it. Which form a route accepts is settled when the route is created, so it is that route's `signature_v2` switch in the routes file (section 8), and the plain form is the default.
 - **The route's own shape**: fired by `cron_job`, pointing at a job the bot's wake already runs, so the wake lands in a run whose prompt, skills and delivery are the bot's own rather than in a second, webhook-only instruction set. The rendered `reason` arrives as transient per-run context; the job's own prompt, skills and delivery are unchanged. **The cutover removes the job the poll pointed at** — its programs go with their cron entries (section 11) — so a route created afterwards either fires a job kept deliberately as the wake's landing place, or is an ordinary agent-mode route whose prompt is the envelope's `reason`. Which one each bot has is decided when the routes are created and recorded in section 10, not assumed here.
 - **Coalescing**: the route groups bursts by `{repository.full_name}#{card.number}`, so five rapid comments on one card are one wake with the latest event. A genuine second fact after the quiet window is a second wake.
 - **Timeouts and retries**: a short request timeout, and a bounded retry with backoff for a connection error or a 5xx. A 4xx is never retried — it means the route, the secret or the envelope is wrong, and repeating it repeats the failure.
-- **What the far end guarantees**: the gateway runs the agent run, or fires the job's turn, at most once per accepted delivery, and its own dedup cache drops a repeated delivery id. The dispatcher therefore does not need to know whether the agent finished, only whether the wake was accepted — what it tracks is the session, and the card's stage is what closes that.
+- **What the far end guarantees**: the gateway runs the agent run, or fires the job's turn, at most once per accepted delivery, and its own dedup cache drops a repeated delivery id. The dispatcher therefore does not need to know whether the agent finished, only whether the wake was accepted.
 
 ## 6. Idempotency and replay
 
@@ -119,7 +101,6 @@ GitHub delivers at least once, and redelivers on any non-2xx. The dispatcher is 
 
 - The cache is a bounded map with a one-hour TTL, matching the TTL the gateway itself uses, so both hops forget at the same rate.
 - The cache is in memory, so a restart loses it (see [ADR 007](adrs/007-persistence.md)). A redelivery after a restart can wake an agent twice. That is accepted: a duplicate wake costs one agent turn, and the agent re-reads the card, which is the source of truth. What must never happen is a wake that acts on an event it has misread — and the wake cannot, because it carries a reason, not a command.
-- The queue and the sessions are in memory for the same reason and with the same cost: a restart forgets what was waiting, and the cards keep the facts that matter — they stay assigned and unstarted, and an assignment is never made twice because the card already carries it.
 - A delivery that ends in the dead-letter file has its dedup entry dropped, so an operator's re-dispatch after the fix is not swallowed as a duplicate.
 
 ## 7. Failure modes
@@ -131,23 +112,21 @@ GitHub delivers at least once, and redelivers on any non-2xx. The dispatcher is 
 - **Outbound retries** — bounded, with backoff, for connection errors and 5xx only.
 - **Dead-lettering** — after the retries are exhausted the delivery is appended to a dead-letter file with the reason, and the audit line says so. A failed wake is never silently dropped: an event nobody saw is the failure this whole service exists to prevent.
 - **The gateway is down** — the same path. No retry storm, because the far end's own claim protects it, and the dead-letter file holds what was missed.
-- **A restart** — the dedup cache is empty, the audit log is not, and the sessions the service held are gone. The cards are not: a card in `In Progress` is a session again on the first read, and an assigned card whose bot was never woken stays assigned and unstarted. The log is reopened by a reader; the service never rewrites it.
-- **A session that never closes** — the card's owner never moves it, so no event arrives and that bot takes no second card. It is accepted rather than guessed at: nothing reassigns a card out from under its holder, and the operator's hourly stalled-work probe is what sees the stall. Taking the card off the bot, or moving it out of `In Progress`, releases the session.
-- **A board write that fails** — the delivery is answered as a failure and retried, or it is dead-lettered, and the card stays unassigned. An assignment is never assumed: the write's answer is the audit line's, and the next event on that card tries again.
+- **A restart** — the dedup cache is empty, the audit log is not. The log is reopened by a reader; the service never rewrites it.
 - **Secret rotation** — the gateway holds one secret per route and GitHub holds one per webhook, so a rotation is a brief window in which signatures do not verify and deliveries fail visibly. Rotate at a quiet moment, and read GitHub's delivery list rather than assuming it went cleanly.
 - **A bad route or a bad secret** — a `4xx` from the gateway is recorded and not retried. It is a configuration fault, and it is fixed by a human, not by another attempt.
 
 ## 8. Configuration and secrets
 
-- The **routes file** is YAML and lives in this repository: the listen address, the allowlist of repositories and events, the gateway's address and whether it multiplexes profiles, the organisation and project the board is read and written through, and one entry per route — its name, the bot it wakes, the gateway route and profile it posts to, the signature form that route accepts, and the *name* of the secret it verifies with. It is committed because it holds no secret. **The order of the `routes` entries is the assignment order** (section 4): the first route whose bot is free takes a card with nobody on it, so moving an entry is a routing change like any other and lands in the same reviewed diff.
+- The **routes file** is YAML and lives in this repository: the listen address, the allowlist of repositories and events, the gateway's address and whether it multiplexes profiles, the organisation and project the board read is addressed to, and one entry per route — its name, the bot it wakes, the gateway route and profile it posts to, the signature form that route accepts, and the *name* of the secret it verifies with. It is committed because it holds no secret. **The order of the `routes` entries is the claimant order** (section 4): the first route whose bot holds nothing takes a claimable card, so moving an entry is a routing change like any other and lands in the same reviewed diff.
 - **Secret values are outside it**: an environment file the service's unit loads, or paths to files with mode `600`, owned by the service user. The routes file may name the environment variable or the path; it never holds the value.
 - **Nothing secret is logged, ever** — not the value, not a prefix, not a hash of it. Payload bodies are not logged either: an audit line carries identifiers, not content, because a payload can carry anything a third party wrote.
 - The one secret per route rule applies on both hops: GitHub signs the inbound POST with the route's secret, and the dispatcher signs the outbound POST with the bot's route secret on the gateway. They are different secrets for different hops.
-- **The board has a token of its own**, named by the routes file's own `board:` block — `owner`, `project`, and the *name* of the token — and resolved at boot the same way a route's secrets are, so a reference that resolves to nothing stops the process rather than the first silent event. It is read-mostly and writes exactly one field: reading the organisation's project items needs `read:project`, and writing a card's assignee needs the project's own scope and write access to issues. A card's own assignees are read from the issue itself.
+- **The board's read has a token of its own**, named by the routes file's own `board:` block — `owner`, `project`, and the *name* of the token — and resolved at boot the same way a route's secrets are, so a reference that resolves to nothing stops the process rather than the first silent event. It is read-only for the board; reading the organisation's project items needs `read:project` on the token, and a card's own assignees are read from the issue itself.
 
 ## 9. The audit trail
 
-One line per delivery, appended in arrival order, JSON Lines in a size-rotated file whose path is configuration. Each line carries: the time in UTC, the delivery id, the event and action, the repository, the card number when there is one, the routing decision, the assignee it wrote when it wrote one, the bot it woke, the outbound outcome, and the response code the sender was given. Nothing else — no body, no comment text, no login beyond the actor's.
+One line per delivery, appended in arrival order, JSON Lines in a size-rotated file whose path is configuration. Each line carries: the time in UTC, the delivery id, the event and action, the repository, the card number when there is one, the routing decision and the bot it woke, the outbound outcome, and the response code the sender was given. Nothing else — no body, no comment text, no login beyond the actor's.
 
 The trail answers the two questions an operator actually asks: *was this event woken, and why not if not*.
 
@@ -159,9 +138,8 @@ Host facts, recorded here as they were confirmed; one that is not yet built says
 - **The listen side.** The service binds loopback only: `127.0.0.1:8645`, serving `POST /github`. Both are the routes file's `listen` and `endpoint_path`, and these are the values the tree carries.
 - **The public side.** TLS terminates at the reverse proxy in front of the service, which is what gives GitHub a path to post to. **That is the decision: a proxy with a certificate, not a tunnel out to a fronting service.** The host's own name, the public URL and the certificate are recorded here when the deployment card builds the proxy; as of 2026-09-30 nothing on the host terminated TLS, `sshd` was the only listener, and there was no certificate and no public path.
 - **The gateway.** Its webhook adapter listens on `8644` and each bot's route is created on it, bound to that bot's profile with its own secret. Profile multiplexing is on (`gateway.multiplex_profiles: true`), so the outbound form is `/p/<bot>/webhooks/<route>` (section 5). The routes live in `~/.hermes/webhook_subscriptions.json` and are hot-reloaded, so a route change is live on the next event with no gateway restart. **The webhook platform is off today** — no subscriptions file, nothing listening on `8644` — so enabling it and creating the four routes is the deployment card's step.
-- **The inbound webhook.** One organisation webhook, not one per repository (section 12): new repositories are covered with no second setup step, and the allowlist makes it safe. Creating it needs an organisation owner. It subscribes to the board's own event as well as the repository ones (`projects_v2_item`, section 4), because a card arriving or moving is a wake and nothing else reports it.
-- **The board token.** The board and issue reads, and the one write — the assignee of a card nobody holds — go through the GitHub API with a token of its own, kept outside the routes file like every other secret and named by its own `board:` block (section 8). The read itself is the tree's `internal/board`; the project items need `read:project`, and the assignee write needs the project scope and write access to issues. **It is a credential with a mutation on the other side of it**, so it is scoped to that one field and to nothing else. It does not exist yet; the deployment card creates it.
-- **The board's columns.** Three: `Todo`, `In Progress`, `Done` (section 4 and [RULESET.md](RULESET.md)). `In Review` and `Ready to Ship` are removed from the project when this version is deployed — review duty is the pull request's reviewer, and a column is removed by the operator, not by the service.
+- **The inbound webhook.** One organisation webhook, not one per repository (section 12): new repositories are covered with no second setup step, and the allowlist makes it safe. Creating it needs an organisation owner.
+- **The board token.** The board and issue reads go through the GitHub API with a token of its own, read-only for the board, kept outside the routes file like every other secret and named by its own `board:` block (section 8). The read itself is the tree's `internal/board`; the project items need `read:project` on the token. It does not exist yet; the deployment card creates it.
 - **Each route's shape** — the job it fires, or an ordinary agent-mode route (section 5) — is recorded here with the routes, because it is a property of how the host's gateway is configured rather than of this service.
 
 ## 11. The cutover
@@ -184,30 +162,21 @@ Settled, and argued in the ADRs:
 - HMAC-SHA256 over the raw body, one secret per route, rejection before parsing ([002](adrs/002-github-webhook-ingestion.md)).
 - The wake is a signed POST to the bot's own gateway route, carrying a reason this service composed ([003](adrs/003-waking-an-agent-through-the-gateway.md)).
 - Idempotent at the delivery id, in a one-hour in-memory cache, and a failed wake is dead-lettered rather than dropped ([004](adrs/004-idempotency-and-replay.md)).
-- One router, in one place, on the card's assignee, and the assignment of a card with nobody on it ([005](adrs/005-routing-an-event-to-one-bot.md), amended by [010](adrs/010-the-dispatcher-assigns-work.md)).
+- One router, in one place, on the card's assignee — and the claim rule when a card has nobody on it ([005](adrs/005-routing-an-event-to-one-bot.md)).
 - A committed routes file, secrets outside it ([006](adrs/006-configuration-and-secrets.md)).
 - No storage in v1 ([007](adrs/007-persistence.md)).
 - The board is read over both of GitHub's APIs — REST for one card, the GraphQL project items for the board — with a token of its own ([009](adrs/009-reading-the-board.md)).
 - A systemd user unit beside the gateway, the clean-slate cutover, the probe stays ([008](adrs/008-deployment-and-the-cutover.md)).
 - The wake text is composed by the dispatcher, not by a gateway template.
-- The service writes one board field, the assignee of a card nobody holds, and moves no card ([010](adrs/010-the-dispatcher-assigns-work.md)).
+- The service never writes to the board.
 
 Settled with the operator on 2026-09-30, each answered rather than assumed, each landing in the section it shapes:
 
 - **The cutover is a clean slate.** The poll is removed entirely before the dispatcher runs — no per-bot migration, no coexistence, no rollback to the poll — which voids the premise section 11 and [ADR 008](adrs/008-deployment-and-the-cutover.md) were built on. Restated in section 11 and in that record.
-- **Whose card it is comes from the assignee alone** wherever the payload carries it; the board is read only where the payload is silent — a comment, a review request, a check run — so each board call still has to earn itself. In section 4.
+- **An event on a card with nobody on it wakes the claim.** The router computes the claimable card and wakes the one bot whose turn it is, by the claimant order the routes file names — the rule the poll implements today, carried over deliberately, because with the poll retired nothing else implements a claim. In section 4, and argued in [ADR 005](adrs/005-routing-an-event-to-one-bot.md).
+- **Whose card it is comes from the assignee alone** wherever the payload carries it; the board is read only where the payload is silent — a comment on an unassigned card, a review request, a check run — so each board call still has to earn itself. In section 4.
 - **One organisation webhook**, not one per repository: new repositories are covered with no second setup step, and the allowlist makes it safe. It needs an organisation owner to create it. In section 10.
 - **The routes file stays YAML, with one dependency**: `gopkg.in/yaml.v3`, added by the skeleton and justified in its pull request, which is the bar [ADR 001](adrs/001-go-and-the-standard-library.md) sets. The alternative — standard library only, a JSON routes file, [ADR 006](adrs/006-configuration-and-secrets.md) amended — is the one not taken. In section 8 and the README.
 - **The host facts are in section 10**: the loopback port and the endpoint path, profile multiplexing on, the gateway's webhook platform still off, the reverse proxy that terminates TLS, the organisation webhook, and the board token that does not exist yet.
 
-Settled with the operator on 2026-10-02 — version 2, argued in [ADR 010](adrs/010-the-dispatcher-assigns-work.md):
-
-- **The service assigns; no bot claims.** A card nobody holds is assigned by the service to the first bot in the routes order that holds nothing, and the assignment is written to the board. This supersedes the claim wake settled on 2026-09-30, which is gone with the code it described. In section 4, in [RULESET.md](RULESET.md), and in [ADR 010](adrs/010-the-dispatcher-assigns-work.md).
-- **One session per bot, in memory.** A bot develops one card at a time, a card for a busy bot waits on the in-memory queue, and a review is not a session and takes no slot. In section 4 and the ruleset.
-- **The board is three columns**: `Todo`, `In Progress`, `Done`. `In Review` and `Ready to Ship` are removed — review duty is the pull request's reviewer, and a card is finished when its pull request merges. In section 10 and the ruleset.
-- **Label changes are wakes**, `blocked` and its removal above all: a lifted block wakes the holder again, which is the exit a blocked card did not have. In section 4 and the ruleset.
-- **The operator is not a reviewer on every pull request.** The author requests a peer bot, and the operator when the operator asks to be. In [RULESET.md](RULESET.md) and AGENTS.md.
-- **The precedence is the operator, then `blocked`, then the assignee.** In the ruleset, and applied in section 4.
-- **Two payload shapes are confirmed from the live wire rather than assumed**: that a re-request of a review arrives as `pull_request.review_requested`, and what a `projects_v2_item` delivery carries when a card's assignee or its column changes. Neither is a fact the service acts on directly — every delivery is a reason to re-read the card — so confirming them costs a delivery and not a design.
-
-Nothing here is open. A question about the architecture is settled in this section and argued in an ADR; a fact about the host is recorded in section 10; and something that has not been seen on the wire is confirmed from a real delivery, which the re-read makes safe to get wrong.
+Nothing here is open. A question about the architecture is settled in this section and argued in an ADR; a fact about the host is recorded in section 10.

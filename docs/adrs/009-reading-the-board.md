@@ -1,7 +1,5 @@
 # 009 - Reading the Board
 
-**Amended by [010](010-the-dispatcher-assigns-work.md):** what the claim wake used to read, the assignment reads and then writes. The two APIs and the token of its own stand; only the sentence about the claim wake is superseded.
-
 ## Context
 
 The routing decision leaves the process exactly once: the owning bot of a delivery that is silent about its owner, and the claimable card when a card is left with nobody on it ([005](005-routing-an-event-to-one-bot.md), systems document section 4). Until now that read was an interface the router was handed and nothing filled it, so every silent delivery resolved to no wake and the claim wake could not fire at all. Filling it means asking GitHub two questions: one card, which a delivery may name by pull request rather than by card, and the whole board, with the stage each card is in.
