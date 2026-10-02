@@ -1,5 +1,7 @@
 # 005 - Routing an Event to One Bot
 
+**Amended by [010](010-the-dispatcher-assigns-work.md):** the claim wake this record decides is replaced by the assignment the service writes itself. The rest of the rule — one router, on the card's assignee, never more than one bot and never all four — stands, and the systems document's section 4 is the current statement of it.
+
 ## Context
 
 Four bots share one board, and every event must wake exactly one of them or none. The rule the poll already uses is: the card's assignee is who acts on it, its board stage says whether they do, and a card that is in Todo and unassigned is claimable by whichever bot is holding nothing. The payload carries the assignee for most events and nothing at all for some — a review request, a finished check run on a pull request whose card lives elsewhere. With the poll retired ([008](008-deployment-and-the-cutover.md), systems document section 11) the claim it performs has to live here, because nothing else performs one.
