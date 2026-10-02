@@ -1,20 +1,20 @@
 # Agent Instructions
 
-A Go service that receives GitHub webhooks and wakes the right `aivara-se` agent with the reason the event matters, for the operator of the fleet.
+A Go service that receives GitHub webhooks, assigns the cards nobody holds, and wakes the right `aivara-se` agent with the reason the event matters, for the operator of the fleet.
 
-Design documents, the agent configuration, and the Go service they describe. `docs/PRODUCT.md` is what the service is for and how it is judged, `docs/SYSTEMS.md` is the architecture and its interfaces, and `docs/adrs/` holds the decisions and what each rejected.
+Design documents, the agent configuration, and the Go service they describe. `docs/PRODUCT.md` is what the service is for and how it is judged, `docs/SYSTEMS.md` is the architecture and its interfaces, `docs/RULESET.md` is which event wakes whom and under what precedence, and `docs/adrs/` holds the decisions and what each rejected.
 
 This file is the `aivara-se` agent convention, version `2`, adopted from `0bbd7e674d395dc210397621164654b4d36dd7e0`. Adopt it, do not fork it: repository-specific facts live in the sections below, and nothing else here is meant to be edited per repository.
 
 ## Current Project Focus
 
-Settle the open questions in `docs/SYSTEMS.md` section 12 with the operator — above all which bot an event on an unassigned card should wake — and then finish the service: the router is the last stub. Do not guess the routing table while the question that decides its shape is open.
+Build version 2 as `docs/adrs/010-the-dispatcher-assigns-work.md` decides it, against the rules in `docs/RULESET.md`: the service assigns the cards nobody holds itself, keeps one session per bot with an in-memory queue behind it, listens to the board's own event and to label changes, and stops reading a board column that no longer exists. Nothing in `docs/SYSTEMS.md` section 12 is open; what it records is what the code has to implement.
 
 This section is steering, not policy. It is the one place where what matters right now outranks the standing rules below, it changes often, and it is replaced rather than appended to. Keep it short enough to read in full, and current enough to be worth reading.
 
 ## House rules
 
-- **Never** wake more than one bot for one event, and **never** write to the board: the service wakes agents, the card says what to do.
+- **Never** wake more than one bot for one event, and **never** move a card: the service assigns a card nobody holds, wakes the agent that holds it, and the card says what to do.
 - **Never** parse a request body before its signature verifies.
 - **Always** keep secret values out of this repository: the routes file names a secret and never holds it.
 - **Never** log a payload body or a secret value, at any verbosity.
@@ -37,7 +37,7 @@ go test ./...
 
 Run the whole sequence, not just its fast part, and read every result — the exit code of the last command says nothing about the first.
 
-CI runs those three commands on every pull request and on `main` (`.github/workflows/checks.yml`). The gate covers the packages, the loader's refusals, the shape of the audit and dead-letter lines, the wake's outbound half against a stub gateway, and signed POSTs driven through the receiver with the router and the poster stubbed; it does not cover a delivery through the real router, which is the last stub the check arrives with. Then the four things no script sees: every relative link in a document resolves to a file in the tree, no convention slot is left unfilled, `docs/SYSTEMS.md` section 12 still names the questions the cards are blocked on, and each ADR's Consequences says what its choice costs, not only what it buys.
+CI runs those three commands on every pull request and on `main` (`.github/workflows/checks.yml`). The gate covers the packages, the loader's refusals, the shape of the audit and dead-letter lines, the wake's outbound half against a stub gateway, and signed POSTs driven through the receiver and the real router; it does not cover a delivery against the live board, which is what a stubbed board stands in for. Then the four things no script sees: every relative link in a document resolves to a file in the tree, no convention slot is left unfilled, `docs/SYSTEMS.md` section 12 still records what is settled and leaves no architecture question open, and each ADR's Consequences says what its choice costs, not only what it buys.
 
 ## Version Control
 
@@ -46,16 +46,17 @@ CI runs those three commands on every pull request and on `main` (`.github/workf
 - **Never** commit to `main` directly. **Never** force-push a branch another agent or person has seen.
 - Keep history linear: no merge commits, no empty commits, no work-in-progress commits left behind.
 - Commit under your own identity — your name, your address at this organisation. Never a generic bot, never another agent's identity.
-- Remote work is always a branch plus a pull request. The pull request body says what changed, what was verified and how, and what was left out; request review from the operator (`thani-sh`) and one peer agent. Leave the working tree clean: no scratch files, no editor backups, no `.env` you created.
+- Remote work is always a branch plus a pull request. The pull request body says what changed, what was verified and how, and what was left out; request review from one peer agent, and never from the author of the branch — an agent never reviews its own work. The operator is added as a reviewer only when the operator asks to be. Leave the working tree clean: no scratch files, no editor backups, no `.env` you created.
 
 ## Repository Structure
 
-- `cmd/` and `internal/`: the service — `config`, `audit`, `receiver` and `wake` whole, `router` the last stub
+- `cmd/` and `internal/`: the service — `config`, `audit`, `receiver`, `router`, `board` and `wake`
 - `config/routes.example.yaml`: the routes file template; no secret value lives in it
 - `.github/workflows/checks.yml`: the gate
 - `README.md`: what the service is, how it builds and runs, and where the documents are
 - `docs/PRODUCT.md`: what the service is for, who it is for, and how it is judged
 - `docs/SYSTEMS.md`: the architecture, the interfaces, and what is settled and what is open
+- `docs/RULESET.md`: which event wakes whom, and the precedence the rules are read under
 - `docs/adrs/`: the architecture decision records, `000` being the convention the rest follow
 - `AGENTS.md`: this file
 

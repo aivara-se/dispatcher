@@ -32,11 +32,12 @@ gateway:
   base_url: http://127.0.0.1:8644
   multiplex_profiles: true
 
-# The board the routing decision reads: the claimable card, and the assignee of
-# a card a silent delivery names (docs/SYSTEMS.md section 4). The token is a
-# secret like every other one — read-only for the board, kept outside this file
-# (§8) — and a reference that resolves to nothing stops the process at boot, so
-# this block is filled with something that resolves wherever the fleet runs.
+# The board the routing decision reads, and the one field it writes: the
+# assignee of a card nobody holds (docs/SYSTEMS.md section 4, docs/RULESET.md).
+# The token is a secret like every other one — kept outside this file (§8),
+# writing that one field and nothing else — and a reference that resolves to
+# nothing stops the process at boot, so this block is filled with something that
+# resolves wherever the fleet runs.
 board:
   owner: aivara-se
   project: 2
@@ -44,13 +45,16 @@ board:
 
 # The allowlist. A repository or an event that is not here is answered 202 and
 # ignored, never 4xx — a failure list full of things that are not failures is
-# useless for spotting the real ones (docs/SYSTEMS.md section 3).
+# useless for spotting the real ones (docs/SYSTEMS.md section 3). `issues`
+# carries the `blocked` label going on and off, and `projects_v2_item` is the
+# board's own event: a card arrived, moved or was assigned (section 4).
 repositories:
   - aivara-se/dispatcher
   - aivara-se/learn-chess
 events:
   - issues
   - issue_comment
+  - projects_v2_item
   - pull_request
   - pull_request_review
   - pull_request_review_comment
@@ -75,8 +79,10 @@ retry_bound: 3
 dedup_ttl: 1h
 dedup_bound: 4096
 
-# One route per bot. Each field holds the *name* of a secret, never the value
-# itself: `secret` names what GitHub signs this webhook with, and
+# One route per bot, and the order of these entries is the assignment order: the
+# first bot here that holds nothing takes a card with nobody on it
+# (docs/SYSTEMS.md sections 4 and 8). Each field holds the *name* of a secret,
+# never the value itself: `secret` names what GitHub signs this webhook with, and
 # `gateway_secret` names what the bot's own route on the gateway holds. Two
 # different secrets for two different hops, so one leak is not a credential on
 # both sides (docs/SYSTEMS.md section 8).
