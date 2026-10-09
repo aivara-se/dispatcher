@@ -58,21 +58,6 @@ CI runs those three commands on every pull request and on `main` (`.github/workf
 - `docs/SYSTEMS.md`: the architecture, the interfaces, and what is settled and what is open
 - `docs/adrs/`: the architecture decision records, `000` being the convention the rest follow
 - `AGENTS.md`: this file
-- `.agents/skills/`: the convention's skills
 
 New markdown goes in the directory that already owns its subject, and a fact has exactly one home. Never add a second copy of something a document already says; link to it. If a path in the map above stops being true, fix the map in the same pull request. A map that lies is worse than no map.
 
-## Agent Skills
-
-`.agents/skills/` holds one skill per kind of work — the procedure to follow, not a second copy of these instructions. A skill stands on its own: it names no file of this convention and points at no other skill, so a reader who has it has everything it needs. This file is what points at the skills; they never point back. Each skill declares in its front matter what it covers and its `when-to-use`: the situation in which you must open it. Read the skill that covers the work before you start it.
-
-- .agents/skills/coding/SKILL.md
-- .agents/skills/testing/SKILL.md
-- .agents/skills/writing/SKILL.md
-- .agents/skills/review/SKILL.md
-
-Every skill on disk is listed above, and every skill listed above exists. A new skill is added here in the same pull request that adds it, and a skill deleted from disk is deleted from this list in the same commit. An index that has drifted is worse than a short one.
-
-Front matter is exactly three keys: `name`, equal to the directory; `description`, one sentence; `when-to-use`, the trigger in the reader's words. A skill stays under about 120 lines, covers one concern, and names every file it ships. Skills are flat until this repository has more than eight of them or two clearly unrelated groups, then they are grouped under `.agents/skills/<group>/<skill>/` and this index is updated with them.
-
-A skill that is true only of this repository stays here. A skill that would be true of every repository belongs in the `aivara-se` convention instead, in a pull request of its own.
