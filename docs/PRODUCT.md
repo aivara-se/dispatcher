@@ -24,6 +24,7 @@ A card is a GitHub issue. The board is the source of truth: the service reads it
 
 ## What the dispatcher does
 
+- **A card is assigned to an agent** — the service starts that agent's run, unless it is already working on something else.
 - **A card is added to `Backlog`** — the service assigns it to MaMa and starts her run.
 - **A card is moved to `Refined`** — the service assigns it to a developer that holds no card and is not already working, and starts that developer's run. A card with no developer free waits in `Refined` until one is.
 - **A card is moved to `Finished`** — the service starts MaMa's run, to see which blocked cards it has unblocked.
@@ -50,16 +51,16 @@ A card is a GitHub issue. The board is the source of truth: the service reads it
 - **Every developer is busy.** A card in `Refined` is not lost: it is assigned when one frees.
 - **Two cards refined at once.** Each is assigned to a different developer; no card is assigned twice.
 - **A restart.** The board holds the state the service needs, so a restart loses no work, and the cost is at most one duplicate wake.
-- **A card moved into `Started` by hand.** It is not in `Refined`, so it is offered to nobody; the board is obeyed.
+- **A card moved into `Started` by hand.** No developer is picked for it — it is not in `Refined` — and if it is assigned, its assignee is started like any other assignment.
 - **The agent acted.** No agent is started for its own action.
 - **A wrong or missing signature.** Refused before anything is parsed, so a sender configured with the wrong secret fails loudly in GitHub's delivery list.
-- **A body over the limit.** Refused at the same size the gateway refuses, so a delivery passes both hops or neither.
+- **A body over the limit.** Refused at the service's own limit, before anything is parsed.
 - **An event that is not ours.** Accepted and ignored, never a `4xx`, so the delivery list still shows the real failures.
 - **A run that cannot be started, or a board read that fails.** Retried, then dead-lettered and the audit line says so; GitHub redelivers.
 
 ## What v1 does not do
 
-- Not a scheduler. Nothing fires on a clock; the hourly stalled-work probe stays where it is.
+- Not a scheduler. Nothing fires on a clock.
 - Not a dependency resolver. MaMa reads the links between cards and works out what a `Finished` card unblocked; the service models no blockers.
 - Not a board writer beyond the assignee, and not a second source of truth.
 - Not a deployment step. A merge ends the card; what a merge deploys is the repository's own pipeline.
