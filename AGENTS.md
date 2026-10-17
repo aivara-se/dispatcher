@@ -4,7 +4,7 @@ A Go service that receives GitHub's deliveries for the `aivara-se` organisation 
 
 ## Current Project Focus
 
-The service is built and its gate is green on `main`. What is left is the live cutover ([`#74`](https://github.com/aivara-se/dispatcher/issues/74)) — the systemd unit, the Caddy path and the first real delivery — and the pass's own gap ([`#65`](https://github.com/aivara-se/dispatcher/issues/65)): the change marker its per-card record reads, and a boot rebuild of the run table that admits neither a phantom run nor a dropped live child. Both cards sit in `Refined`.
+The service is built and its gate is green on `main`. What is left is the live cutover ([`#74`](https://github.com/aivara-se/dispatcher/issues/74)) — the systemd unit, the Caddy path and the first real delivery — and a child that outlives the service ([`#91`](https://github.com/aivara-se/dispatcher/issues/91)): it sits in no run table, so the boot look starts a second run for its profile and one-run-per-agent cannot see the first. Both are open on the board.
 
 This section is steering, not policy. It is the one place where what matters right now outranks the standing rules below, it changes often, and it is replaced rather than appended to. Keep it short enough to read in full, and current enough to be worth reading.
 
